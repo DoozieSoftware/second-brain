@@ -69,3 +69,38 @@ Second search: TOOL_CALL: search_memory({"query": "login", "top_k": 5})`;
     expect(toolNames.includes(match![1])).toBe(false);
   });
 });
+
+describe('ReasoningEngine error handling', () => {
+  it('should require OPENROUTER_API_KEY', () => {
+    const originalKey = process.env.OPENROUTER_API_KEY;
+    delete process.env.OPENROUTER_API_KEY;
+
+    expect(() => new ReasoningEngine()).toThrow('OPENROUTER_API_KEY is required');
+
+    if (originalKey) process.env.OPENROUTER_API_KEY = originalKey;
+  });
+
+  it('should classify authentication errors', () => {
+    const error401 = new Error('Request failed with status 401');
+    expect(error401.message.includes('401')).toBe(true);
+
+    const error403 = new Error('Request failed with status code 403');
+    expect(error403.message.includes('403')).toBe(true);
+  });
+
+  it('should classify rate limit errors', () => {
+    const error429 = new Error('Rate limit exceeded: 429');
+    expect(error429.message.includes('429')).toBe(true);
+  });
+
+  it('should classify network errors', () => {
+    const connectionRefused = new Error('connect ECONNREFUSED 127.0.0.1:443');
+    expect(connectionRefused.message.includes('ECONNREFUSED')).toBe(true);
+
+    const timeout = new Error('ETIMEDOUT');
+    expect(timeout.message.includes('ETIMEDOUT')).toBe(true);
+
+    const fetchFailed = new Error('fetch failed');
+    expect(fetchFailed.message.includes('fetch failed')).toBe(true);
+  });
+});

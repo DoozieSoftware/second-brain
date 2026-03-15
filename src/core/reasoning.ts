@@ -69,11 +69,24 @@ export class ReasoningEngine {
       const response = await this.client.chat.completions.create(params);
       const choice = response.choices[0];
 
-      const toolCalls: ToolCall[] = (choice.message.tool_calls || []).map((tc) => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: JSON.parse(tc.function.arguments),
-      }));
+      if (!choice) {
+        throw new Error('No response from model. The API returned an empty result.');
+      }
+
+      const toolCalls: ToolCall[] = (choice.message.tool_calls || []).map((tc) => {
+        let args: Record<string, unknown> = {};
+        try {
+          args = JSON.parse(tc.function.arguments);
+        } catch {
+          // Model returned malformed JSON for tool arguments
+          console.warn(`[Reasoning] Malformed tool args for ${tc.function.name}: ${tc.function.arguments}`);
+        }
+        return {
+          id: tc.id,
+          name: tc.function.name,
+          arguments: args,
+        };
+      });
 
       // Mark that tool calling works
       if (this.supportsToolCalling === null && tools && tools.length > 0) {
@@ -107,22 +120,47 @@ export class ReasoningEngine {
         },
       };
     } catch (error) {
-      // If we get an error about tools not being supported, retry without them
-      if (error instanceof Error && error.message.includes('tool') && params.tools) {
-        this.supportsToolCalling = false;
-        delete params.tools;
-        delete params.tool_choice;
-        const response = await this.client.chat.completions.create(params);
-        const choice = response.choices[0];
-        return {
-          content: choice.message.content || '',
-          toolCalls: [],
-          usage: {
-            promptTokens: response.usage?.prompt_tokens || 0,
-            completionTokens: response.usage?.completion_tokens || 0,
-          },
-        };
+      // Classify the error for better feedback
+      if (error instanceof Error) {
+        // Tool calling not supported — retry without tools
+        if (error.message.includes('tool') && params.tools) {
+          this.supportsToolCalling = false;
+          delete params.tools;
+          delete params.tool_choice;
+          const response = await this.client.chat.completions.create(params);
+          const choice = response.choices[0];
+          return {
+            content: choice?.message?.content || '',
+            toolCalls: [],
+            usage: {
+              promptTokens: response.usage?.prompt_tokens || 0,
+              completionTokens: response.usage?.completion_tokens || 0,
+            },
+          };
+        }
+
+        // Authentication errors
+        if (error.message.includes('401') || error.message.includes('403')) {
+          throw new Error(
+            'OpenRouter API key is invalid or expired. Check your OPENROUTER_API_KEY in .env'
+          );
+        }
+
+        // Rate limiting
+        if (error.message.includes('429')) {
+          throw new Error(
+            'OpenRouter rate limit hit. Wait a moment and try again, or upgrade your API key.'
+          );
+        }
+
+        // Network errors
+        if (error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT') || error.message.includes('fetch failed')) {
+          throw new Error(
+            'Cannot reach OpenRouter API. Check your internet connection.'
+          );
+        }
       }
+
       throw error;
     }
   }

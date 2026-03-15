@@ -145,20 +145,35 @@ export class GitHubConnector {
 
   async syncAll(since?: string): Promise<MemoryDocument[]> {
     const allDocs: MemoryDocument[] = [];
-    const repos = await this.fetchRepos();
+    let repos: { owner: string; name: string }[];
+
+    try {
+      repos = await this.fetchRepos();
+    } catch (error) {
+      if (error instanceof Error && (error.message.includes('401') || error.message.includes('403'))) {
+        throw new Error('GitHub token is invalid or expired. Check GITHUB_TOKEN in .env');
+      }
+      throw error;
+    }
 
     console.log(`Syncing ${repos.length} repos...`);
 
     for (const { owner, name } of repos) {
-      console.log(`  Fetching ${owner}/${name}...`);
+      try {
+        console.log(`  Fetching ${owner}/${name}...`);
 
-      const [issuesAndPRs, readme] = await Promise.all([
-        this.fetchIssuesAndPRs(owner, name, since),
-        this.fetchReadme(owner, name),
-      ]);
+        const [issuesAndPRs, readme] = await Promise.all([
+          this.fetchIssuesAndPRs(owner, name, since),
+          this.fetchReadme(owner, name),
+        ]);
 
-      allDocs.push(...issuesAndPRs);
-      if (readme) allDocs.push(readme);
+        allDocs.push(...issuesAndPRs);
+        if (readme) allDocs.push(readme);
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        console.warn(`  Skipping ${owner}/${name}: ${msg}`);
+        // Continue with other repos instead of failing the entire sync
+      }
     }
 
     console.log(`Total documents fetched: ${allDocs.length}`);
