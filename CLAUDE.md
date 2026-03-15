@@ -26,6 +26,9 @@ npm install
 # TypeScript type-check
 npx tsc --noEmit
 
+# Run tests
+npm test
+
 # Run CLI commands
 npx tsx src/cli.ts ask "Why did we build feature X?"  # Single question
 npx tsx src/cli.ts ask "..." --verbose                # Show reasoning steps
@@ -71,9 +74,10 @@ src/
 ### Key flow
 1. `supervisor.ask(question)` → creates Operator, passes conversation history for follow-up context
 2. Operator's `reason()` loop: LLM thinks aloud → calls `search_memory`/`search_related`/`list_sources` → reflects on results → searches again or synthesizes final answer with citations
-3. `supervisor.sync()` → connectors fetch data → ingested into memory with embeddings
-4. `supervisor.scan()` → savings-scanner analyzes memory for duplicates, stalled items, meeting waste
-5. REPL mode (`chat` command) → maintains conversation history for natural follow-ups
+3. **Fallback mode:** Free OpenRouter models don't support function calling. The reasoning engine auto-detects this and parses `TOOL_CALL: tool_name({"json": "args"})` from plain text instead.
+4. `supervisor.sync()` → connectors fetch data → ingested into memory with embeddings
+5. `supervisor.scan()` → savings-scanner analyzes memory for duplicates, stalled items, meeting waste
+6. REPL mode (`chat` command) → maintains conversation history for natural follow-ups
 
 ### Adding a new connector/operator
 1. Create connector in `src/connectors/` that returns `MemoryDocument[]`
