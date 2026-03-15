@@ -86,8 +86,21 @@ export class SupervisorOperator {
 
   async getStatus(): Promise<{ source: string; configured: boolean; docCount?: number }[]> {
     const docCount = this.memory.count;
+
+    // Check if GitHub is available via token or gh CLI
+    let githubConfigured = !!process.env.GITHUB_TOKEN;
+    if (!githubConfigured) {
+      try {
+        const { execSync } = await import('child_process');
+        execSync('gh auth status', { stdio: 'ignore' });
+        githubConfigured = true;
+      } catch {
+        // gh not authenticated
+      }
+    }
+
     return [
-      { source: 'github', configured: !!process.env.GITHUB_TOKEN },
+      { source: 'github', configured: githubConfigured },
       { source: 'docs', configured: true, docCount },
       { source: 'email', configured: !!(process.env.IMAP_USER && process.env.IMAP_PASSWORD) },
       { source: 'calendar', configured: !!process.env.GOOGLE_CALENDAR_API_KEY },

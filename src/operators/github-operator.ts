@@ -1,8 +1,21 @@
+import { execSync } from 'child_process';
 import { Operator } from '../core/operator.js';
 import { ReasoningEngine } from '../core/reasoning.js';
 import { Memory } from '../core/memory.js';
 import { ToolRegistry } from '../core/tools.js';
 import { GitHubConnector } from '../connectors/github-connector.js';
+
+function getGitHubToken(): string {
+  // Try env var first
+  if (process.env.GITHUB_TOKEN) return process.env.GITHUB_TOKEN;
+
+  // Fall back to gh CLI
+  try {
+    return execSync('gh auth token', { encoding: 'utf-8' }).trim();
+  } catch {
+    return '';
+  }
+}
 
 export class GitHubOperator extends Operator {
   private connector: GitHubConnector;
@@ -11,8 +24,10 @@ export class GitHubOperator extends Operator {
     const tools = new ToolRegistry();
     super('github', reasoning, memory, tools);
 
+    const token = getGitHubToken();
     this.connector = new GitHubConnector({
-      token: process.env.GITHUB_TOKEN || '',
+      token,
+      owner: process.env.GITHUB_ORG || undefined,
     });
 
     this.registerTools();
@@ -61,6 +76,12 @@ export class GitHubOperator extends Operator {
   }
 
   async sync(since?: string): Promise<number> {
+    const token = getGitHubToken();
+    if (!token) {
+      console.error('[GitHub] No token available. Set GITHUB_TOKEN or run `gh auth login`');
+      return 0;
+    }
+
     console.log('[GitHub] Starting sync...');
     const docs = await this.connector.syncAll(since);
     return this.memory.ingest(docs);

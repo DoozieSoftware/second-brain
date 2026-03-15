@@ -207,9 +207,11 @@ export class Operator {
     // Tell the model what tools are available
     prompt += `
 Available tools:
-- search_memory(query, top_k): Search the organizational knowledge base. This has indexed content from GitHub, docs, emails, and calendar.
+- search_memory(query, top_k): Search the knowledge base. Use SHORT, SIMPLE queries (1-3 words). Examples: "authentication", "database migration", "dooz-code".
+  BAD queries: "authentication implementation details for the login flow"
+  GOOD queries: "authentication login"
 
-Think about what you need to find, then search. You may need to search multiple times with different terms to get a complete picture.`;
+Think about what you need to find, then search. You may need to search multiple times with different terms.`;
 
     return prompt;
   }

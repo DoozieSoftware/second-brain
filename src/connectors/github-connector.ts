@@ -19,10 +19,28 @@ export class GitHubConnector {
   }
 
   async fetchRepos(): Promise<{ owner: string; name: string }[]> {
+    // Specific repos provided
     if (this.repos && this.owner) {
       return this.repos.map((name) => ({ owner: this.owner!, name }));
     }
 
+    // Org mode — fetch from specific org
+    if (this.owner) {
+      const repos: { owner: string; name: string }[] = [];
+      for await (const response of this.octokit.paginate.iterator(
+        this.octokit.rest.repos.listForOrg,
+        { org: this.owner, per_page: 100, sort: 'updated', type: 'all' }
+      )) {
+        for (const repo of response.data) {
+          if (!repo.archived) {
+            repos.push({ owner: this.owner, name: repo.name });
+          }
+        }
+      }
+      return repos;
+    }
+
+    // Default: authenticated user's repos
     const repos: { owner: string; name: string }[] = [];
     for await (const response of this.octokit.paginate.iterator(
       this.octokit.rest.repos.listForAuthenticatedUser,

@@ -19,13 +19,25 @@ export interface ReasoningResult {
   usage: { promptTokens: number; completionTokens: number };
 }
 
-const DEFAULT_MODEL = 'google/gemma-2-9b-it:free';
+const DEFAULT_MODEL = 'meta-llama/llama-3.2-3b-instruct:free';
+
+// Free models to rotate through when rate-limited
+const FREE_MODELS = [
+  'meta-llama/llama-3.2-3b-instruct:free',
+  'qwen/qwen3-4b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'mistralai/mistral-small-3.1-24b-instruct:free',
+];
+
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 2000;
 
 export class ReasoningEngine {
   private client: OpenAI;
   private defaultModel: string;
   private supportsToolCalling: boolean | null = null;
+  private freeModelRotation = 0;
 
   constructor(apiKey?: string) {
     const key = apiKey || process.env.OPENROUTER_API_KEY;
@@ -50,150 +62,159 @@ export class ReasoningEngine {
     tools?: ChatCompletionTool[],
     options?: ReasoningOptions
   ): Promise<ReasoningResult> {
-    const model = options?.model || this.defaultModel;
+    const baseModel = options?.model || this.defaultModel;
 
+    // Build list of models to try (primary + fallbacks)
+    const modelsToTry = baseModel.includes(':free')
+      ? [baseModel, ...FREE_MODELS.filter(m => m !== baseModel)]
+      : [baseModel];
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 0; attempt < modelsToTry.length && attempt < MAX_RETRIES; attempt++) {
+      const model = modelsToTry[attempt];
+
+      try {
+        return await this.tryChat(messages, tools, options, model);
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        // Don't retry auth errors or permanent failures
+        if (lastError.message.includes('401') || lastError.message.includes('403')) {
+          throw new Error('OpenRouter API key is invalid or expired. Check your OPENROUTER_API_KEY in .env');
+        }
+
+        // For rate limits, try next model
+        if (lastError.message.includes('429') || lastError.message.includes('rate limit')) {
+          if (attempt < modelsToTry.length - 1) {
+            console.log(`[Reasoning] ${model} rate-limited, trying ${modelsToTry[attempt + 1]}...`);
+            await this.delay(RETRY_DELAY_MS * (attempt + 1));
+            continue;
+          }
+        }
+
+        // For "no endpoints" errors, try next model
+        if (lastError.message.includes('404') || lastError.message.includes('No endpoints')) {
+          if (attempt < modelsToTry.length - 1) {
+            console.log(`[Reasoning] ${model} unavailable, trying ${modelsToTry[attempt + 1]}...`);
+            continue;
+          }
+        }
+
+        // For provider errors, try next model
+        if (lastError.message.includes('Provider returned error') || lastError.message.includes('400')) {
+          if (attempt < modelsToTry.length - 1) {
+            console.log(`[Reasoning] ${model} error, trying ${modelsToTry[attempt + 1]}...`);
+            continue;
+          }
+        }
+
+        // For network errors, retry same model once
+        if (lastError.message.includes('ECONNREFUSED') || lastError.message.includes('ETIMEDOUT') || lastError.message.includes('fetch failed')) {
+          if (attempt < 1) {
+            console.log(`[Reasoning] Network error, retrying ${model}...`);
+            await this.delay(RETRY_DELAY_MS);
+            continue;
+          }
+          throw new Error('Cannot reach OpenRouter API. Check your internet connection.');
+        }
+
+        // Unknown error, throw it
+        throw lastError;
+      }
+    }
+
+    throw lastError || new Error('All models failed');
+  }
+
+  private async tryChat(
+    messages: ChatCompletionMessageParam[],
+    tools?: ChatCompletionTool[],
+    options?: ReasoningOptions,
+    model?: string
+  ): Promise<ReasoningResult> {
     const params: OpenAI.Chat.ChatCompletionCreateParams = {
-      model,
+      model: model || this.defaultModel,
       messages,
       temperature: options?.temperature ?? 0.3,
       max_tokens: options?.maxTokens ?? 2048,
     };
 
-    // If we know tools work, or haven't tested yet, try with tools
     if (tools && tools.length > 0 && this.supportsToolCalling !== false) {
       params.tools = tools;
       params.tool_choice = 'auto';
     }
 
-    try {
-      const response = await this.client.chat.completions.create(params);
-      const choice = response.choices[0];
+    const response = await this.client.chat.completions.create(params);
 
-      if (!choice) {
-        throw new Error('No response from model. The API returned an empty result.');
-      }
-
-      const toolCalls: ToolCall[] = (choice.message.tool_calls || []).map((tc) => {
-        let args: Record<string, unknown> = {};
-        try {
-          args = JSON.parse(tc.function.arguments);
-        } catch {
-          // Model returned malformed JSON for tool arguments
-          console.warn(`[Reasoning] Malformed tool args for ${tc.function.name}: ${tc.function.arguments}`);
-        }
-        return {
-          id: tc.id,
-          name: tc.function.name,
-          arguments: args,
-        };
-      });
-
-      // Mark that tool calling works
-      if (this.supportsToolCalling === null && tools && tools.length > 0) {
-        this.supportsToolCalling = toolCalls.length > 0 || true; // Model accepted tools param
-      }
-
-      let content = choice.message.content || '';
-
-      // If no tool calls but tools were expected, try parsing tool requests from text
-      if (toolCalls.length === 0 && tools && tools.length > 0 && content) {
-        const parsedCalls = this.parseToolCallsFromText(content, tools);
-        if (parsedCalls.length > 0) {
-          // Strip the tool request from the visible content
-          return {
-            content: content.replace(/TOOL_CALL:[\s\S]*/i, '').trim(),
-            toolCalls: parsedCalls,
-            usage: {
-              promptTokens: response.usage?.prompt_tokens || 0,
-              completionTokens: response.usage?.completion_tokens || 0,
-            },
-          };
-        }
-      }
-
-      return {
-        content,
-        toolCalls,
-        usage: {
-          promptTokens: response.usage?.prompt_tokens || 0,
-          completionTokens: response.usage?.completion_tokens || 0,
-        },
-      };
-    } catch (error) {
-      // Classify the error for better feedback
-      if (error instanceof Error) {
-        // Tool calling not supported — retry without tools
-        if (error.message.includes('tool') && params.tools) {
-          this.supportsToolCalling = false;
-          delete params.tools;
-          delete params.tool_choice;
-          const response = await this.client.chat.completions.create(params);
-          const choice = response.choices[0];
-          return {
-            content: choice?.message?.content || '',
-            toolCalls: [],
-            usage: {
-              promptTokens: response.usage?.prompt_tokens || 0,
-              completionTokens: response.usage?.completion_tokens || 0,
-            },
-          };
-        }
-
-        // Authentication errors
-        if (error.message.includes('401') || error.message.includes('403')) {
-          throw new Error(
-            'OpenRouter API key is invalid or expired. Check your OPENROUTER_API_KEY in .env'
-          );
-        }
-
-        // Rate limiting
-        if (error.message.includes('429')) {
-          throw new Error(
-            'OpenRouter rate limit hit. Wait a moment and try again, or upgrade your API key.'
-          );
-        }
-
-        // Network errors
-        if (error.message.includes('ECONNREFUSED') || error.message.includes('ETIMEDOUT') || error.message.includes('fetch failed')) {
-          throw new Error(
-            'Cannot reach OpenRouter API. Check your internet connection.'
-          );
-        }
-      }
-
-      throw error;
+    if (!response || !response.choices) {
+      const error = (response as any)?.error;
+      if (error) throw new Error(`OpenRouter API error: ${error.message || JSON.stringify(error)}`);
+      throw new Error('No response from model.');
     }
+
+    const choice = response.choices[0];
+    if (!choice) throw new Error('No response choice from model.');
+
+    const toolCalls: ToolCall[] = (choice.message.tool_calls || []).map((tc) => {
+      let args: Record<string, unknown> = {};
+      try { args = JSON.parse(tc.function.arguments); } catch { /* malformed */ }
+      return { id: tc.id, name: tc.function.name, arguments: args };
+    });
+
+    if (this.supportsToolCalling === null && tools?.length) {
+      this.supportsToolCalling = toolCalls.length > 0 || true;
+    }
+
+    let content = choice.message.content || '';
+
+    // Fallback: parse TOOL_CALL: from text if no native tool calls
+    if (toolCalls.length === 0 && tools?.length && content) {
+      const parsedCalls = this.parseToolCallsFromText(content, tools);
+      if (parsedCalls.length > 0) {
+        return {
+          content: content.replace(/TOOL_CALL:[\s\S]*/i, '').trim(),
+          toolCalls: parsedCalls,
+          usage: {
+            promptTokens: response.usage?.prompt_tokens || 0,
+            completionTokens: response.usage?.completion_tokens || 0,
+          },
+        };
+      }
+    }
+
+    return {
+      content,
+      toolCalls,
+      usage: {
+        promptTokens: response.usage?.prompt_tokens || 0,
+        completionTokens: response.usage?.completion_tokens || 0,
+      },
+    };
   }
 
-  /**
-   * Parse tool calls from plain text when function calling isn't available.
-   * Looks for patterns like:
-   *   TOOL_CALL: search_memory({"query": "authentication", "top_k": 5})
-   */
+  private delay(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
   private parseToolCallsFromText(content: string, availableTools: ChatCompletionTool[]): ToolCall[] {
     const toolCalls: ToolCall[] = [];
     const toolNames = availableTools.map(t => t.function.name);
-
-    // Pattern: TOOL_CALL: tool_name({json args})
     const pattern = /TOOL_CALL:\s*(\w+)\s*\(([^)]*)\)/gi;
     let match;
 
     while ((match = pattern.exec(content)) !== null) {
       const toolName = match[1];
       const argsStr = match[2];
-
       if (!toolNames.includes(toolName)) continue;
 
       try {
-        // Try to parse as JSON
-        const args = JSON.parse(argsStr);
         toolCalls.push({
           id: `tool_${Date.now()}_${toolCalls.length}`,
           name: toolName,
-          arguments: args,
+          arguments: JSON.parse(argsStr),
         });
       } catch {
-        // Try to extract key-value pairs
         const args = this.parseLooseArgs(argsStr);
         if (args) {
           toolCalls.push({
@@ -204,34 +225,18 @@ export class ReasoningEngine {
         }
       }
     }
-
     return toolCalls;
   }
 
-  /**
-   * Try to parse loose argument formats like:
-   *   query: "authentication", top_k: 5
-   *   "query": "authentication"
-   */
   private parseLooseArgs(str: string): Record<string, unknown> | null {
     const result: Record<string, unknown> = {};
-
-    // Match patterns like key: "value" or key: number
     const pattern = /(\w+):\s*(?:"([^"]*)"|(\d+))/g;
     let match;
-
     while ((match = pattern.exec(str)) !== null) {
       const key = match[1];
-      const strVal = match[2];
-      const numVal = match[3];
-
-      if (strVal !== undefined) {
-        result[key] = strVal;
-      } else if (numVal !== undefined) {
-        result[key] = parseInt(numVal, 10);
-      }
+      if (match[2] !== undefined) result[key] = match[2];
+      else if (match[3] !== undefined) result[key] = parseInt(match[3], 10);
     }
-
     return Object.keys(result).length > 0 ? result : null;
   }
 }
