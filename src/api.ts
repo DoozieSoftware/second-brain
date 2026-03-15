@@ -1,11 +1,23 @@
 import 'dotenv/config';
 import express, { Request, Response } from 'express';
+import { readFile } from 'fs/promises';
+import { join } from 'path';
 import { SupervisorOperator } from './core/supervisor.js';
 
 const app = express();
 app.use(express.json());
 
 const supervisor = new SupervisorOperator();
+
+// Dashboard
+app.get('/', async (_req: Request, res: Response) => {
+  try {
+    const html = await readFile(join(process.cwd(), 'public', 'index.html'), 'utf-8');
+    res.type('html').send(html);
+  } catch {
+    res.status(404).send('Dashboard not found. Run `mkdir -p public && touch public/index.html`');
+  }
+});
 
 app.post('/ask', async (req: Request, res: Response) => {
   try {
@@ -60,10 +72,10 @@ app.get('/status', async (_req: Request, res: Response) => {
 
 const PORT = parseInt(process.env.PORT || '3000');
 app.listen(PORT, () => {
-  console.log(`Second Brain API running on http://localhost:${PORT}`);
-  console.log('Endpoints:');
-  console.log('  POST /ask     - Ask a question');
-  console.log('  POST /sync    - Sync data sources');
-  console.log('  GET  /alerts  - Get savings alerts');
-  console.log('  GET  /status  - Check source status');
+  console.log(`\n🧠 Second Brain running on http://localhost:${PORT}\n`);
+  console.log('Dashboard:  http://localhost:' + PORT);
+  console.log('API:        http://localhost:' + PORT + '/ask');
+  console.log('            http://localhost:' + PORT + '/sync');
+  console.log('            http://localhost:' + PORT + '/alerts');
+  console.log('            http://localhost:' + PORT + '/status');
 });

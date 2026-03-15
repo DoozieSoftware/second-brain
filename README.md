@@ -31,6 +31,10 @@ npx tsx src/cli.ts chat
 
 # Find savings opportunities
 npx tsx src/cli.ts scan
+
+# Web dashboard (chat + alerts + sync)
+npx tsx src/api.ts
+# Open http://localhost:3000
 ```
 
 ## Architecture
@@ -51,7 +55,9 @@ src/
 │   └── savings-scanner.ts # Duplicate/stalled/waste detection
 ├── cli.ts                 # CLI entry point
 ├── repl.ts                # Interactive chat mode
-└── api.ts                 # HTTP API server
+├── api.ts                 # HTTP API server
+└── public/
+    └── index.html         # Web dashboard
 ```
 
 ## Data Sources
