@@ -1,0 +1,1 @@
+Build a "Second Brain for Companies" - AI memory for organizations. Features: Connect Slack, email, meetings, docs, code repos, tickets. AI becomes organizational memory. Anyone can ask: "Why did we build feature X?" AI answers with meeting references, decision logs, code commits, documents.

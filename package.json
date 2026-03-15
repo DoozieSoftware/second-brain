@@ -1,0 +1,41 @@
+{
+  "name": "second-brain",
+  "version": "0.1.0",
+  "description": "AI-powered organizational memory — proactive operators that save time and money",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx watch src/cli.ts",
+    "start": "tsx src/cli.ts",
+    "chat": "tsx src/cli.ts chat",
+    "api": "tsx src/api.ts",
+    "ask": "tsx src/cli.ts ask",
+    "sync": "tsx src/cli.ts sync",
+    "scan": "tsx src/cli.ts scan",
+    "status": "tsx src/cli.ts status"
+  },
+  "bin": {
+    "second-brain": "./src/cli.ts"
+  },
+  "dependencies": {
+    "@xenova/transformers": "^2.17.0",
+    "commander": "^12.1.0",
+    "dotenv": "^16.4.0",
+    "express": "^4.21.0",
+    "glob": "^11.0.0",
+    "googleapis": "^144.0.0",
+    "imapflow": "^1.0.0",
+    "mailparser": "^3.7.0",
+    "octokit": "^4.0.0",
+    "openai": "^4.73.0",
+    "uuid": "^10.0.0"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/mailparser": "^3.4.6",
+    "@types/node": "^22.0.0",
+    "@types/uuid": "^10.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}
