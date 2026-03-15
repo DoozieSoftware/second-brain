@@ -55,6 +55,17 @@ After getting search results, reflect:
 - Search for related concepts, not just exact matches
 - When you find something interesting, dig deeper
 
+## How to Use Tools
+
+**Method 1 (preferred):** If you can call tools directly, just use them.
+
+**Method 2 (fallback):** If you cannot call tools directly, use this exact syntax:
+TOOL_CALL: search_memory({"query": "your search terms", "top_k": 5})
+TOOL_CALL: search_related({"topic": "topic to explore"})
+TOOL_CALL: list_sources({})
+
+Always explain your reasoning BEFORE using a tool.
+
 ## Answer Quality
 - Lead with the direct answer, then provide supporting evidence
 - Cite specific sources: file names, PR numbers, email subjects, dates
