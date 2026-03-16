@@ -42,6 +42,12 @@ export class SavingsScanner {
   }
 
   async scan(): Promise<string> {
+    const report = await this.scanStructured();
+    if (typeof report === 'string') return report;
+    return this.formatReport(report);
+  }
+
+  async scanStructured(): Promise<SavingsReport | string> {
     console.log('\n[Proactive Scan] Analyzing organizational memory...\n');
 
     const allDocs = await this.memory.getAll();
@@ -76,7 +82,7 @@ export class SavingsScanner {
     // Generate LLM summary of the findings
     report.summary = await this.generateSummary(report);
 
-    return this.formatReport(report);
+    return report;
   }
 
   /**

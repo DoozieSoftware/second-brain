@@ -7,6 +7,17 @@ import { DocsOperator } from '../operators/docs-operator.js';
 import { EmailOperator } from '../operators/email-operator.js';
 import { CalendarOperator } from '../operators/calendar-operator.js';
 import { SavingsScanner } from '../proactive/savings-scanner.js';
+import type { SavingsReport } from '../proactive/savings-scanner.js';
+import {
+  storeScanResults,
+  getActiveAlerts,
+  dismissAlert,
+  getSavingsTrend,
+  formatSlackMessage,
+  formatEmailDigest,
+  loadAlerts,
+} from '../proactive/delivery.js';
+import type { StoredAlert } from '../proactive/delivery.js';
 
 export class SupervisorOperator {
   private reasoning: ReasoningEngine;
@@ -30,22 +41,18 @@ export class SupervisorOperator {
   async ask(question: string, verbose = false): Promise<OperatorResponse> {
     const mainOperator = new Operator('supervisor', this.reasoning, this.memory);
 
-    // Build context from conversation history
     let context = `You have access to organizational memory from multiple sources: GitHub (repos, PRs, issues), documents, emails, and calendar events. Search across all of them to answer the question comprehensively. Connect related information across sources.`;
 
-    // Add conversation history for follow-up context
     if (this.conversationHistory.length > 0) {
-      const recentHistory = this.conversationHistory.slice(-6); // Last 3 exchanges
+      const recentHistory = this.conversationHistory.slice(-6);
       context += `\n\nPrevious conversation:\n${recentHistory.map(h => `${h.role}: ${h.content.slice(0, 200)}`).join('\n')}`;
     }
 
     const result = await mainOperator.reason(question, context, verbose);
 
-    // Store in conversation history
     this.conversationHistory.push({ role: 'user', content: question });
     this.conversationHistory.push({ role: 'assistant', content: result.answer });
 
-    // Keep history manageable
     if (this.conversationHistory.length > 20) {
       this.conversationHistory = this.conversationHistory.slice(-20);
     }
@@ -84,10 +91,55 @@ export class SupervisorOperator {
     return this.savingsScanner.scan();
   }
 
+  async scanAndStore(): Promise<SavingsReport | string> {
+    const report = await this.savingsScanner.scanStructured();
+    if (typeof report === 'string') return report;
+    storeScanResults(report);
+    return report;
+  }
+
+  getAlerts(): StoredAlert[] {
+    return getActiveAlerts();
+  }
+
+  dismissAlertById(id: string): boolean {
+    return dismissAlert(id);
+  }
+
+  getTrend(): { trend: 'improving' | 'stable' | 'worsening'; weeklyAvg: number } {
+    return getSavingsTrend();
+  }
+
+  getSlackPayload(): object {
+    const store = loadAlerts();
+    // Reconstruct a minimal report from stored alerts
+    const active = store.alerts.filter(a => !a.dismissed);
+    return formatSlackMessage({
+      totalAlerts: active.length,
+      highPriority: active.filter(a => a.severity === 'high').length,
+      totalEstimatedHours: active.reduce((s, a) => s + a.estimatedHours, 0),
+      totalEstimatedDollars: active.reduce((s, a) => s + a.estimatedDollars, 0),
+      alerts: active,
+      summary: '',
+    });
+  }
+
+  getEmailDigest(): { subject: string; html: string; text: string } {
+    const store = loadAlerts();
+    const active = store.alerts.filter(a => !a.dismissed);
+    return formatEmailDigest({
+      totalAlerts: active.length,
+      highPriority: active.filter(a => a.severity === 'high').length,
+      totalEstimatedHours: active.reduce((s, a) => s + a.estimatedHours, 0),
+      totalEstimatedDollars: active.reduce((s, a) => s + a.estimatedDollars, 0),
+      alerts: active,
+      summary: '',
+    });
+  }
+
   async getStatus(): Promise<{ source: string; configured: boolean; docCount?: number }[]> {
     const docCount = this.memory.count;
 
-    // Check if GitHub is available via token or gh CLI
     let githubConfigured = !!process.env.GITHUB_TOKEN;
     if (!githubConfigured) {
       try {
