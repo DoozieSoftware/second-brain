@@ -8,6 +8,8 @@ export interface OperatorResponse {
   citations: Citation[];
   confidence: number;
   steps: ReasoningStep[];
+  searchCount: number;
+  successfulSearches: number;
 }
 
 export interface Citation {
@@ -26,7 +28,7 @@ export interface ReasoningStep {
 
 const MAX_REASONING_LOOPS = 8;
 
-const SYSTEM_PROMPT = `You are a reasoning operator — an AI analyst with organizational memory. You think step-by-step like a human who genuinely wants to help.
+const SYSTEM_PROMPT = `You are a reasoning operator — an AI analyst with organizational memory AND personal user context. You think step-by-step like a human who genuinely wants to help.
 
 ## Your Mental Model
 
@@ -88,7 +90,16 @@ CITATIONS:
 If you have NO useful information after searching, say:
 FINAL_ANSWER: I couldn't find information about this in the available sources. [Suggest what sources might help]
 CONFIDENCE: 0.0
-CITATIONS: []`;
+CITATIONS: []
+
+## User Context Integration
+
+When user context is provided, reason through the lens of their decision-making profile:
+- Their values and communication style should influence HOW you present the answer
+- Their past decisions in relevant domains should inform WHAT you recommend
+- If your generic best-practice answer differs from what their profile suggests, present both perspectives
+- Always be transparent: "Based on your profile, you tend to..." or "Your past decisions suggest..."
+- Do NOT blindly follow the profile — use it as context, not constraint`;
 
 export class Operator {
   protected name: string;
@@ -97,6 +108,8 @@ export class Operator {
   protected tools: ToolRegistry;
   private searchedQueries: Set<string> = new Set();
   private allResults: string[] = [];
+  private searchCount: number = 0;
+  private successfulSearches: number = 0;
 
   constructor(name: string, reasoning: ReasoningEngine, memory: Memory, tools?: ToolRegistry) {
     this.name = name;
@@ -105,14 +118,22 @@ export class Operator {
     this.tools = tools || new ToolRegistry();
   }
 
-  async reason(query: string, context?: string, verbose = false): Promise<OperatorResponse> {
+  async reason(query: string, context?: string, userContext?: string, verbose = false): Promise<OperatorResponse> {
     const steps: ReasoningStep[] = [];
     const citations: Citation[] = [];
     this.searchedQueries.clear();
     this.allResults = [];
+    this.searchCount = 0;
+    this.successfulSearches = 0;
+
+    // Build system prompt with user context if available
+    let systemPrompt = SYSTEM_PROMPT;
+    if (userContext) {
+      systemPrompt += '\n\n## Personal User Context\n' + userContext;
+    }
 
     const messages: ChatCompletionMessageParam[] = [
-      { role: 'system', content: SYSTEM_PROMPT },
+      { role: 'system', content: systemPrompt },
       {
         role: 'user',
         content: this.buildInitialPrompt(query, context),
@@ -194,7 +215,7 @@ export class Operator {
       confidence = 0.15;
     }
 
-    return { answer: finalAnswer, citations, confidence, steps };
+    return { answer: finalAnswer, citations, confidence, steps, searchCount: this.searchCount, successfulSearches: this.successfulSearches };
   }
 
   private buildInitialPrompt(query: string, context?: string): string {
@@ -259,11 +280,13 @@ Think about what you need to find, then search. You may need to search multiple 
         const query = args.query as string;
         const topK = Math.min((args.top_k as number) || 5, 15);
         const results = await this.memory.search(query, topK);
+        this.searchCount++;
 
         if (results.length === 0) {
           return `No results for "${query}". Try broader terms or different phrasing.`;
         }
 
+        this.successfulSearches++;
         const formatted = results
           .map((r, i) => {
             const source = r.metadata.source || 'unknown';
@@ -376,7 +399,7 @@ Think about what you need to find, then search. You may need to search multiple 
       }
     }
 
-    return { answer, citations, confidence, steps: [] };
+    return { answer, citations, confidence, steps: [], searchCount: 0, successfulSearches: 0 };
   }
 
   private extractCitationsFromText(text: string): Citation[] {

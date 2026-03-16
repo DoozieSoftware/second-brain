@@ -103,5 +103,138 @@ program
     console.log('See .env.example for required variables.');
   });
 
+// ========== Learning Commands ==========
+
+program
+  .command('profile')
+  .description('Show your learned decision profile')
+  .action(async () => {
+    const supervisor = new SupervisorOperator();
+    console.log('\n' + supervisor.getProfile());
+    console.log('\n' + '━'.repeat(50));
+  });
+
+program
+  .command('evolution')
+  .description('Show system evolution and self-improvement report')
+  .action(async () => {
+    const supervisor = new SupervisorOperator();
+    console.log('\n' + supervisor.getEvolution());
+    console.log('\n' + '━'.repeat(50));
+  });
+
+program
+  .command('learn')
+  .description('Start interactive learning session (answer questions)')
+  .option('-c, --count <number>', 'Number of questions', '5')
+  .action(async (options) => {
+    const supervisor = new SupervisorOperator();
+    const readline = await import('readline');
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+
+    const ask = (q: string): Promise<string> => new Promise(resolve => rl.question(q, resolve));
+
+    console.log('\n🧠 Interactive Learning Session');
+    console.log('━'.repeat(50));
+    console.log('\nI\'ll ask you questions to learn how you think and decide.');
+    console.log('Your answers help me reason more like you.\n');
+
+    const questions = await supervisor.getDailyQuestions(parseInt(options.count));
+
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i];
+      console.log(`\n📝 Question ${i + 1}/${questions.length} (${q.domain.replace(/_/g, ' ')})`);
+      console.log('─'.repeat(40));
+      console.log(q.question);
+
+      if (q.type === 'preference' || q.type === 'tradeoff') {
+        console.log('\n(Take your time - I\'m learning your reasoning, not just your answer)');
+      }
+
+      const answer = await ask('\n💭 Your answer: ');
+
+      if (answer.trim()) {
+        console.log('\n🔄 Processing your response...');
+        const analysis = await supervisor.submitAnswer(q.id, answer);
+        console.log(`   ✓ Extracted ${analysis.extractedValues.length} value signals`);
+        console.log(`   ✓ Confidence: ${(analysis.confidence * 100).toFixed(0)}%`);
+      } else {
+        console.log('   (Skipped)');
+      }
+    }
+
+    console.log('\n' + '━'.repeat(50));
+    console.log('\n✅ Learning session complete!');
+    console.log('   Run `npx tsx src/cli.ts profile` to see your updated profile');
+    rl.close();
+  });
+
+program
+  .command('feedback')
+  .description('Provide feedback on a recent answer')
+  .argument('<quality>', 'good, partial, or bad')
+  .option('-q, --query <query>', 'The original question')
+  .option('-c, --correction <correction>', 'What you would have answered instead')
+  .action(async (quality: string, options) => {
+    if (!['good', 'partial', 'bad'].includes(quality)) {
+      console.error('\n❌ Quality must be: good, partial, or bad');
+      process.exit(1);
+    }
+
+    const supervisor = new SupervisorOperator();
+    await supervisor.giveFeedback(
+      options.query || 'recent query',
+      quality as 'good' | 'partial' | 'bad',
+      options.correction
+    );
+
+    console.log('\n✅ Feedback recorded. I\'ll learn from this!');
+  });
+
+program
+  .command('analyze')
+  .description('Analyze system performance and suggest improvements')
+  .option('-d, --days <number>', 'Analysis window in days', '7')
+  .action(async (options) => {
+    const supervisor = new SupervisorOperator();
+    const analysis = await supervisor.getAnalysis(parseInt(options.days));
+
+    console.log('\n📊 Performance Analysis');
+    console.log('━'.repeat(50));
+    console.log(`\nPeriod: ${analysis.period}`);
+    console.log(`Total queries: ${analysis.totalQueries}`);
+    console.log(`Average confidence: ${(analysis.avgConfidence * 100).toFixed(0)}%`);
+    console.log(`Average reasoning loops: ${analysis.avgLoops.toFixed(1)}`);
+    console.log(`Search success rate: ${(analysis.searchSuccessRate * 100).toFixed(0)}%`);
+    console.log(`Confidence trend: ${analysis.confidenceTrend}`);
+
+    if (analysis.strongDomains.length > 0) {
+      console.log('\n📈 Strong domains:');
+      for (const d of analysis.strongDomains) {
+        console.log(`   • ${d.domain}: ${(d.confidence * 100).toFixed(0)}%`);
+      }
+    }
+
+    if (analysis.weakDomains.length > 0) {
+      console.log('\n⚠️ Domains needing improvement:');
+      for (const d of analysis.weakDomains) {
+        console.log(`   • ${d.domain}: ${(d.confidence * 100).toFixed(0)}%`);
+      }
+    }
+
+    if (analysis.improvements.length > 0) {
+      console.log('\n💡 Suggested improvements:');
+      for (const imp of analysis.improvements) {
+        console.log(`   • ${imp.description}`);
+        console.log(`     Expected: +${(imp.expectedImprovement * 100).toFixed(0)}% improvement`);
+      }
+    }
+
+    console.log('\n' + '━'.repeat(50));
+  });
+
 // Default command: if first arg doesn't match a command, treat as a question
 program.parse();
