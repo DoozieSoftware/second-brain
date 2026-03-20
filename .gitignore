@@ -4,3 +4,4 @@ data/
 .env
 *.js.map
 *.d.ts
+.worktrees/
