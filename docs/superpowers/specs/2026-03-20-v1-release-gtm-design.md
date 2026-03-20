@@ -42,7 +42,7 @@ Two independent tracks run simultaneously. Launch when both are complete.
 
 **Track 1 — Technical completion:** Finish the in-flight reasoning quality work (existing plan `2026-03-18-core-reasoning-quality.md`) plus launch-blocker fixes.
 
-**Track 2 — OSS launch prep:** Everything that makes the repo discoverable, runnable, and trustworthy to a new visitor.
+**Track 2 — OSS launch prep:** Everything that makes the repo discoverable, runnable, and trustworthy to a new visitor. Most of Track 2 is fully independent of Track 1 (Docker, OSS hygiene, issue templates, `.env.example`, CI). Exception: the README demo GIF and YouTube video require Track 1A reasoning quality to be complete first — do not record demos until the reasoning loop is producing good output.
 
 ---
 
@@ -61,6 +61,8 @@ Full details in `docs/superpowers/plans/2026-03-18-core-reasoning-quality.md`. S
 | Tests: SearchEngine, CrossSourceLinker, verification | `src/__tests__/` | Partial |
 
 The SearchEngine class (`src/core/search.ts`) exists and is correct. The gap is wiring it into the rest of the system.
+
+**Track 1A acceptance criteria (release gate):** Track 1A is complete when: (1) the Operator uses SearchEngine on every query with score threshold filtering, (2) at least one cross-source link is returned when available, and (3) the verification phase blocks answers with unsupported citations. All existing tests pass and `npx tsc --noEmit` reports zero errors.
 
 ### Track 1B: Launch Blockers
 
@@ -125,11 +127,13 @@ The OSS core is complete and genuinely useful forever. Paid tiers add scale and 
 | Scheduled auto-sync | No | Yes | Yes |
 | Multi-user / teams | No | Yes | Yes |
 | Slack/email auto-delivery | No | Yes | Yes |
-| Usage analytics | No | Yes | Yes |
+| Team usage dashboard (query volume, top users) | No | Yes | Yes |
 | SSO / SAML | No | No | Yes |
 | Audit logs | No | No | Yes |
 | Air-gapped deployment | No | No | Yes |
 | SLA + priority support | No | No | Yes |
+
+**No telemetry:** OSS installs never send data home. Zero phone-home. This must be true and verifiable in the source code.
 
 **Indicative pricing (to finalize at v1.1):**
 - Cloud: $49-99/mo for founders, $299-599/mo for SMB teams
@@ -166,7 +170,7 @@ Goal: Community momentum, connector ecosystem growth, cloud waitlist.
 | Connector releases | Build new connectors (Notion, Linear, Jira) publicly, announce each — each is a new distribution moment |
 | Indie Hackers | Milestone posts every 100 stars: "Here's what we learned from 500 self-hosters" |
 | YouTube | 5-min demo: sync GitHub → ask "why did we build X?" → run savings scan → show dollar output |
-| Cloud waitlist | "Get notified when cloud launches" banner in README and dashboard, collect emails |
+| Cloud waitlist | "Get notified when cloud launches" banner in README and dashboard. Implementation: Loops or Typeform link embedded as a badge in README and surfaced in dashboard settings page. Set up before launch. |
 
 #### Phase 3 — Monetization (1000+ stars or first enterprise inbound)
 
@@ -204,7 +208,7 @@ Goal: Community momentum, connector ecosystem growth, cloud waitlist.
 | `src/cli.ts` | Add tsx shebang |
 | `package.json` | Fix bin entry |
 | `data/.gitkeep` | New |
-| `.gitignore` | Add `data/memory.json`, `data/alerts.json`, `data/digest.md` |
+| `.gitignore` | Add `data/memory.json`, `data/alerts.json`, `data/digest.md` (`digest.md` is the proactive savings digest generated at runtime by the scan-and-store flow) |
 | `.github/workflows/ci.yml` | New — test + typecheck |
 
 ### Track 2 (Launch Prep)
@@ -224,9 +228,17 @@ Goal: Community momentum, connector ecosystem growth, cloud waitlist.
 
 ## Success Criteria for v1.0
 
+**Release gates (must be true before OSS launch):**
 - `npm test` passes with zero failures
 - `npx tsc --noEmit` passes with zero errors
 - `docker compose up` produces a working instance in under 5 minutes on a fresh machine
 - The savings scanner returns actionable output with dollar estimates on a synced repo
 - A new visitor can understand the product in 60 seconds from the README
-- The HN post reaches front page (top 30) within 6 hours of posting
+- Track 1A acceptance criteria met (see above)
+- Cloud waitlist collection mechanism is live and tested before launch
+
+**GTM scorecard (reviewed at Day 7 post-launch, not a release gate):**
+- HN post reaches front page (top 30)
+- 200+ GitHub stars in first week
+- At least 3 community issues or questions filed
+- At least 1 cloud waitlist signup
