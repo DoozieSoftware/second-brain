@@ -3,11 +3,31 @@ import express, { Request, Response } from 'express';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { SupervisorOperator } from './core/supervisor.js';
+import { metricsCollector } from './core/metrics.js';
+import { alertManager } from './core/alerting.js';
+import { logger } from './core/logger.js';
 
 const app = express();
 app.use(express.json());
 
 const supervisor = new SupervisorOperator();
+
+if (process.env.NODE_ENV === 'production') {
+  alertManager.configure({
+    enabled: true,
+    slackWebhook: process.env.SLACK_WEBHOOK_URL,
+    checkIntervalMs: 60000,
+  });
+  alertManager.start();
+  logger.info('Production monitoring enabled');
+}
+
+app.use((req: Request, _res: Response, next) => {
+  if (req.path.startsWith('/health') || req.path.startsWith('/metrics')) {
+    metricsCollector.recordPerformance();
+  }
+  next();
+});
 
 // Dashboard
 app.get('/', async (_req: Request, res: Response) => {
@@ -19,9 +39,71 @@ app.get('/', async (_req: Request, res: Response) => {
   }
 });
 
+app.get('/monitor', async (_req: Request, res: Response) => {
+  try {
+    const html = await readFile(join(process.cwd(), 'public', 'monitor', 'index.html'), 'utf-8');
+    res.type('html').send(html);
+  } catch {
+    res.status(404).send('Monitor dashboard not found.');
+  }
+});
+
+// ─── Health & Monitoring ───
+
+app.get('/health', (_req: Request, res: Response) => {
+  const health = metricsCollector.getHealthStatus();
+  const statusCode = health.status === 'healthy' ? 200 : health.status === 'degraded' ? 200 : 503;
+  res.status(statusCode).json(health);
+});
+
+app.get('/health/live', (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'alive', timestamp: new Date().toISOString() });
+});
+
+app.get('/health/ready', async (_req: Request, res: Response) => {
+  try {
+    const status = await supervisor.getStatus();
+    const hasData = status.some(s => s.configured);
+    if (hasData) {
+      res.status(200).json({ status: 'ready', sources: status });
+    } else {
+      res.status(503).json({ status: 'not_ready', reason: 'No sources configured' });
+    }
+  } catch (error) {
+    res.status(503).json({ status: 'not_ready', error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+app.get('/metrics', (_req: Request, res: Response) => {
+  const metrics = metricsCollector.getMetrics();
+  res.json(metrics);
+});
+
+app.get('/metrics/performance', (_req: Request, res: Response) => {
+  const perf = metricsCollector.getPerformanceStats();
+  res.json(perf);
+});
+
+app.get('/alerts/active', (_req: Request, res: Response) => {
+  const alerts = alertManager.getActiveAlerts();
+  res.json({ alerts });
+});
+
+app.get('/alerts/all', (_req: Request, res: Response) => {
+  const alerts = alertManager.getAllAlerts();
+  res.json({ alerts });
+});
+
+app.post('/alerts/:id/acknowledge', (req: Request, res: Response) => {
+  const alertId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const ok = alertManager.acknowledge(alertId);
+  res.json({ success: ok });
+});
+
 // ─── Core API ───
 
 app.post('/ask', async (req: Request, res: Response) => {
+  const startTime = Date.now();
   try {
     const { question } = req.body;
     if (!question) {
@@ -29,8 +111,27 @@ app.post('/ask', async (req: Request, res: Response) => {
       return;
     }
     const result = await supervisor.ask(question);
+    const responseTime = Date.now() - startTime;
+    
+    metricsCollector.recordQuery({
+      question,
+      domain: 'general',
+      responseTime,
+      confidence: result.confidence,
+      searchCount: result.searchCount,
+      sourcesUsed: result.citations.map(c => c.source),
+      success: result.confidence > 0.3,
+    });
+    
     res.json(result);
   } catch (error) {
+    const responseTime = Date.now() - startTime;
+    metricsCollector.recordError({
+      type: 'api_error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      stack: error instanceof Error ? error.stack : undefined,
+      context: { endpoint: '/ask', responseTime },
+    });
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
   }
 });
@@ -38,9 +139,15 @@ app.post('/ask', async (req: Request, res: Response) => {
 app.post('/sync', async (req: Request, res: Response) => {
   try {
     const { sources } = req.body;
+    metricsCollector.recordSync();
     const results = await supervisor.sync(sources);
     res.json({ results });
   } catch (error) {
+    metricsCollector.recordError({
+      type: 'sync_error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      context: { endpoint: '/sync' },
+    });
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
   }
 });
@@ -59,9 +166,15 @@ app.get('/status', async (_req: Request, res: Response) => {
 // Run a new scan and persist results
 app.post('/scan', async (_req: Request, res: Response) => {
   try {
+    metricsCollector.recordScan();
     const report = await supervisor.scanAndStore();
     res.json({ report });
   } catch (error) {
+    metricsCollector.recordError({
+      type: 'scan_error',
+      message: error instanceof Error ? error.message : 'Unknown error',
+      context: { endpoint: '/scan' },
+    });
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
   }
 });
@@ -143,16 +256,29 @@ app.get('/deliver/digest', async (_req: Request, res: Response) => {
 // ─── Server ───
 
 const PORT = parseInt(process.env.PORT || '3000');
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
+  logger.info(`Second Brain running on http://localhost:${PORT}`);
   console.log(`\n🧠 Second Brain running on http://localhost:${PORT}\n`);
-  console.log('Dashboard:   http://localhost:' + PORT);
-  console.log('Ask:         POST /ask');
-  console.log('Sync:        POST /sync');
-  console.log('Scan:        POST /scan        (run + persist)');
-  console.log('Alerts:      GET  /alerts       (persisted)');
-  console.log('Dismiss:     POST /alerts/:id/dismiss');
-  console.log('Slack:       GET  /deliver/slack (payload)');
-  console.log('             POST /deliver/slack (send to webhook)');
-  console.log('Email:       GET  /deliver/email (digest)');
-  console.log('Digest:      GET  /deliver/digest (markdown)');
+  console.log('Dashboard: http://localhost:' + PORT);
+  console.log('Health:    http://localhost:' + PORT + '/health');
+  console.log('Metrics:   http://localhost:' + PORT + '/metrics');
+  console.log('Alerts:    http://localhost:' + PORT + '/alerts/active');
+});
+
+process.on('SIGTERM', () => {
+  logger.info('SIGTERM received, shutting down gracefully');
+  alertManager.stop();
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received, shutting down gracefully');
+  alertManager.stop();
+  server.close(() => {
+    logger.info('Server closed');
+    process.exit(0);
+  });
 });

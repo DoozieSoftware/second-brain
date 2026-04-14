@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Second Brain - Monitoring Dashboard</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+    .container { max-width: 1400px; margin: 0 auto; padding: 2rem; }
+    header { margin-bottom: 2rem; }
+    h1 { font-size: 2rem; display: flex; align-items: center; gap: 0.5rem; }
+    .status-badge {
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.875rem;
+      font-weight: 600;
+    }
+    .status-healthy { background: #22c55e; color: white; }
+    .status-degraded { background: #f59e0b; color: white; }
+    .status-unhealthy { background: #ef4444; color: white; }
+    
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; }
+    
+    .card {
+      background: #1e293b;
+      border-radius: 0.75rem;
+      padding: 1.5rem;
+      border: 1px solid #334155;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .card-title { font-size: 1rem; color: #94a3b8; font-weight: 500; }
+    .card-value { font-size: 2rem; font-weight: 700; color: #f1f5f9; }
+    
+    .metrics-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.5rem 0;
+      border-bottom: 1px solid #334155;
+    }
+    .metrics-row:last-child { border-bottom: none; }
+    .metric-label { color: #94a3b8; }
+    .metric-value { font-weight: 600; }
+    
+    .progress-bar {
+      height: 0.5rem;
+      background: #334155;
+      border-radius: 9999px;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    .progress-fill {
+      height: 100%;
+      background: #3b82f6;
+      border-radius: 9999px;
+      transition: width 0.3s;
+    }
+    
+    .alert-item {
+      padding: 1rem;
+      background: #334155;
+      border-radius: 0.5rem;
+      margin-bottom: 0.5rem;
+    }
+    .alert-critical { border-left: 3px solid #ef4444; }
+    .alert-warning { border-left: 3px solid #f59e0b; }
+    .alert-info { border-left: 3px solid #3b82f6; }
+    
+    .refresh-info {
+      text-align: center;
+      color: #64748b;
+      margin-top: 2rem;
+      font-size: 0.875rem;
+    }
+    
+    #uptime {
+      font-size: 1.5rem;
+    }
+    
+    .domain-bar {
+      display: flex;
+      height: 1.5rem;
+      border-radius: 0.25rem;
+      overflow: hidden;
+      margin-top: 0.5rem;
+    }
+    .domain-segment {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      color: white;
+    }
+    
+    .nav-links {
+      margin-top: 1rem;
+      display: flex;
+      gap: 1rem;
+    }
+    .nav-links a {
+      color: #3b82f6;
+      text-decoration: none;
+      font-size: 0.875rem;
+    }
+    .nav-links a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>
+        <span>🧠</span>
+        Second Brain Monitoring
+        <span id="status-badge" class="status-badge status-healthy">Loading...</span>
+      </h1>
+      <div class="nav-links">
+        <a href="/">← Back to Main Dashboard</a>
+        <a href="/health">Health JSON</a>
+        <a href="/metrics">Metrics JSON</a>
+      </div>
+    </header>
+    
+    <div class="grid">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">System Health</span>
+        </div>
+        <div id="uptime" class="card-value">--</div>
+        <div class="metrics-row">
+          <span class="metric-label">Status</span>
+          <span id="health-status" class="metric-value">--</span>
+        </div>
+        <div class="metrics-row">
+          <span class="metric-label">Error Rate</span>
+          <span id="error-rate" class="metric-value">--</span>
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Queries Today</span>
+        </div>
+        <div id="total-queries" class="card-value">--</div>
+        <div class="metrics-row">
+          <span class="metric-label">Last Hour</span>
+          <span id="hourly-queries" class="metric-value">--</span>
+        </div>
+        <div class="metrics-row">
+          <span class="metric-label">Avg Response</span>
+          <span id="avg-response" class="metric-value">--</span>
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Response Quality</span>
+        </div>
+        <div id="avg-confidence" class="card-value">--</div>
+        <div class="progress-bar">
+          <div id="confidence-bar" class="progress-fill" style="width: 0%"></div>
+        </div>
+        <div class="metrics-row" style="margin-top: 1rem">
+          <span class="metric-label">Successful Queries</span>
+          <span id="successful-queries" class="metric-value">--</span>
+        </div>
+      </div>
+      
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Memory Usage</span>
+        </div>
+        <div id="memory-used" class="card-value">--</div>
+        <div class="progress-bar">
+          <div id="memory-bar" class="progress-fill" style="width: 0%; background: #22c55e"></div>
+        </div>
+        <div class="metrics-row" style="margin-top: 1rem">
+          <span class="metric-label">Heap Total</span>
+          <span id="heap-total" class="metric-value">--</span>
+        </div>
+      </div>
+      
+      <div class="card" style="grid-column: span 2">
+        <div class="card-header">
+          <span class="card-title">Query Distribution by Domain</span>
+        </div>
+        <div id="domain-chart" class="domain-bar"></div>
+        <div id="domain-legend" style="margin-top: 1rem; display: flex; flex-wrap: wrap; gap: 1rem"></div>
+      </div>
+      
+      <div class="card" style="grid-column: span 2">
+        <div class="card-header">
+          <span class="card-title">Active Alerts</span>
+          <span id="alert-count" style="background: #ef4444; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.875rem">0</span>
+        </div>
+        <div id="alerts-list"></div>
+      </div>
+    </div>
+    
+    <p class="refresh-info">Auto-refresh every 10 seconds | Last updated: <span id="last-update">--</span></p>
+  </div>
+  
+  <script>
+    const colors = ['#3b82f6', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
+    
+    async function fetchMetrics() {
+      try {
+        const [healthRes, metricsRes, perfRes, alertsRes] = await Promise.all([
+          fetch('/health'),
+          fetch('/metrics'),
+          fetch('/metrics/performance'),
+          fetch('/alerts/active')
+        ]);
+        
+        const health = await healthRes.json();
+        const metrics = await metricsRes.json();
+        const perf = await perfRes.json();
+        const alerts = await alertsRes.json();
+        
+        updateUI(health, metrics, perf, alerts);
+      } catch (error) {
+        console.error('Failed to fetch metrics:', error);
+      }
+    }
+    
+    function updateUI(health, metrics, perf, alerts) {
+      const badge = document.getElementById('status-badge');
+      badge.className = `status-badge status-${health.status}`;
+      badge.textContent = health.status.toUpperCase();
+      
+      const uptime = formatUptime(health.uptime);
+      document.getElementById('uptime').textContent = uptime;
+      document.getElementById('health-status').textContent = health.status;
+      document.getElementById('error-rate').textContent = (health.errorRate * 100).toFixed(1) + '%';
+      
+      document.getElementById('total-queries').textContent = metrics.total.queries;
+      document.getElementById('hourly-queries').textContent = metrics.hourly.queries;
+      document.getElementById('avg-response').textContent = formatMs(metrics.hourly.avgResponseTime);
+      
+      const confidence = (metrics.hourly.avgConfidence * 100).toFixed(0);
+      document.getElementById('avg-confidence').textContent = confidence + '%';
+      document.getElementById('confidence-bar').style.width = confidence + '%';
+      document.getElementById('successful-queries').textContent = health.recentQueries || 0;
+      
+      const usedMB = (perf.current.memory.heapUsed / 1024 / 1024).toFixed(0);
+      const totalMB = (perf.current.memory.heapTotal / 1024 / 1024).toFixed(0);
+      document.getElementById('memory-used').textContent = usedMB + ' MB';
+      document.getElementById('heap-total').textContent = totalMB + ' MB';
+      document.getElementById('memory-bar').style.width = (usedMB / totalMB * 100).toFixed(0) + '%';
+      
+      updateDomainChart(metrics.domains);
+      
+      document.getElementById('alert-count').textContent = alerts.alerts.length;
+      updateAlerts(alerts.alerts);
+      
+      document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+    }
+    
+    function formatUptime(ms) {
+      const seconds = Math.floor(ms / 1000);
+      const minutes = Math.floor(seconds / 60);
+      const hours = Math.floor(minutes / 60);
+      const days = Math.floor(hours / 24);
+      
+      if (days > 0) return `${days}d ${hours % 24}h`;
+      if (hours > 0) return `${hours}h ${minutes % 60}m`;
+      if (minutes > 0) return `${minutes}m ${seconds % 60}s`;
+      return `${seconds}s`;
+    }
+    
+    function formatMs(ms) {
+      if (ms < 1000) return `${ms.toFixed(0)}ms`;
+      return `${(ms / 1000).toFixed(1)}s`;
+    }
+    
+    function updateDomainChart(domains) {
+      const total = Object.values(domains).reduce((a, b) => a + b, 0);
+      if (total === 0) {
+        document.getElementById('domain-chart').innerHTML = '<div style="width: 100%; background: #334155; display: flex; align-items: center; justify-content: center; color: #94a3b8;">No queries yet</div>';
+        document.getElementById('domain-legend').innerHTML = '';
+        return;
+      }
+      
+      let html = '';
+      let legend = '';
+      const entries = Object.entries(domains);
+      
+      entries.forEach(([domain, count], i) => {
+        const percent = (count / total * 100).toFixed(1);
+        if (parseFloat(percent) > 0.5) {
+          html += `<div class="domain-segment" style="width: ${percent}%; background: ${colors[i % colors.length]}">${percent > 10 ? domain : ''}</div>`;
+          legend += `<div style="display: flex; align-items: center; gap: 0.5rem"><div style="width: 12px; height: 12px; background: ${colors[i % colors.length]}; border-radius: 2px"></div><span>${domain}: ${count}</span></div>`;
+        }
+      });
+      
+      document.getElementById('domain-chart').innerHTML = html;
+      document.getElementById('domain-legend').innerHTML = legend;
+    }
+    
+    function updateAlerts(alerts) {
+      if (alerts.length === 0) {
+        document.getElementById('alerts-list').innerHTML = '<div style="color: #94a3b8; text-align: center; padding: 2rem">No active alerts</div>';
+        return;
+      }
+      
+      const html = alerts.map(a => `
+        <div class="alert-item alert-${a.severity}">
+          <div style="font-weight: 600">${a.rule}</div>
+          <div style="color: #94a3b8; font-size: 0.875rem">${a.message}</div>
+          <div style="color: #64748b; font-size: 0.75rem; margin-top: 0.5rem">${a.timestamp}</div>
+        </div>
+      `).join('');
+      
+      document.getElementById('alerts-list').innerHTML = html;
+    }
+    
+    fetchMetrics();
+    setInterval(fetchMetrics, 10000);
+  </script>
+</body>
+</html>

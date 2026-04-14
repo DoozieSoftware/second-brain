@@ -1,6 +1,6 @@
 {
   "name": "second-brain",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "AI-powered organizational memory — proactive operators that save time and money",
   "type": "module",
   "scripts": {
@@ -33,6 +33,7 @@
     "uuid": "^10.0.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.59.1",
     "@types/express": "^5.0.0",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^22.0.0",
