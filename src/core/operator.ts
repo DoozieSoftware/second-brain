@@ -2,6 +2,8 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { ReasoningEngine } from './reasoning.js';
 import { Memory } from './memory.js';
 import { ToolRegistry } from './tools.js';
+import { SearchEngine } from './search.js';
+import { CrossSourceLinker } from './linker.js';
 
 export interface OperatorResponse {
   answer: string;
@@ -10,6 +12,26 @@ export interface OperatorResponse {
   steps: ReasoningStep[];
   searchCount: number;
   successfulSearches: number;
+  verification?: {
+    score: number;
+    issues: string[];
+    checked: boolean;
+  };
+}
+
+interface Finding {
+  topic: string;
+  content: string;
+  source: string;
+  confidence: number;
+  turn: number;
+}
+
+interface VerificationResult {
+  score: number;
+  claims: Array<{ text: string; status: string; source?: string }>;
+  issues: string[];
+  checked: boolean;
 }
 
 export interface Citation {
@@ -106,16 +128,47 @@ export class Operator {
   protected reasoning: ReasoningEngine;
   protected memory: Memory;
   protected tools: ToolRegistry;
+  protected searchEngine: SearchEngine;
+  protected linker: CrossSourceLinker;
   private searchedQueries: Set<string> = new Set();
   private allResults: string[] = [];
   private searchCount: number = 0;
   private successfulSearches: number = 0;
+  private findings: Map<string, Finding> = new Map();
+  private currentTurn: number = 0;
 
-  constructor(name: string, reasoning: ReasoningEngine, memory: Memory, tools?: ToolRegistry) {
+  constructor(name: string, reasoning: ReasoningEngine, memory: Memory, tools?: ToolRegistry, searchEngine?: SearchEngine) {
     this.name = name;
     this.reasoning = reasoning;
     this.memory = memory;
     this.tools = tools || new ToolRegistry();
+    this.searchEngine = searchEngine || new SearchEngine(memory);
+    this.linker = new CrossSourceLinker(this.searchEngine);
+  }
+
+  private addFinding(topic: string, content: string, source: string): void {
+    const key = topic.toLowerCase();
+    const existing = this.findings.get(key);
+    if (!existing || content.length > existing.content.length) {
+      this.findings.set(key, {
+        topic,
+        content: content.slice(0, 500),
+        source,
+        confidence: existing ? Math.min(existing.confidence + 0.1, 1.0) : 0.7,
+        turn: this.currentTurn,
+      });
+    }
+  }
+
+  private getFindingsSummary(): string {
+    if (this.findings.size === 0) return '';
+    const entries = Array.from(this.findings.values());
+    const summary = entries
+      .sort((a, b) => b.confidence - a.confidence)
+      .slice(0, 10)
+      .map(f => `[${f.source}] ${f.topic}: ${f.content.slice(0, 200)}`)
+      .join('\n');
+    return `\nKey findings so far:\n${summary}`;
   }
 
   async reason(query: string, context?: string, userContext?: string, verbose = false): Promise<OperatorResponse> {
@@ -125,6 +178,8 @@ export class Operator {
     this.allResults = [];
     this.searchCount = 0;
     this.successfulSearches = 0;
+    this.findings.clear();
+    this.currentTurn = 0;
 
     // Build system prompt with user context if available
     let systemPrompt = SYSTEM_PROMPT;
@@ -141,11 +196,13 @@ export class Operator {
     ];
 
     this.registerMemoryTools();
+    this.registerCrossSourceTools();
 
     let finalAnswer = '';
     let confidence = 0;
 
     for (let loop = 0; loop < MAX_REASONING_LOOPS; loop++) {
+      this.currentTurn = loop;
       if (verbose) process.stdout.write(`\n[Loop ${loop + 1}] Thinking...`);
 
       const result = await this.reasoning.chat(
@@ -160,9 +217,28 @@ export class Operator {
         finalAnswer = parsed.answer;
         confidence = parsed.confidence;
         citations.push(...parsed.citations);
+
+        // Verification phase
+        let verificationResult: VerificationResult | undefined;
+        if (citations.length > 0 && confidence > 0.3) {
+          verificationResult = await this.verifyAnswer(query, finalAnswer, citations, this.allResults);
+          if (verificationResult.score < 0.5 && verificationResult.issues.length > 0 && loop < MAX_REASONING_LOOPS - 1) {
+            messages.push({
+              role: 'user',
+              content: `Your answer needs revision. Issues found:\n${verificationResult.issues.join('\n')}\n\nPlease revise your answer with better evidence or note your uncertainty.`,
+            });
+            finalAnswer = '';
+            continue;
+          }
+        }
+
         steps.push({ thought: 'Answer synthesized', observation: `Confidence: ${(confidence * 100).toFixed(0)}%` });
         if (verbose) console.log(`\n✓ Answer ready (confidence: ${(confidence * 100).toFixed(0)}%)`);
-        break;
+        const response: OperatorResponse = { answer: finalAnswer, citations, confidence, steps, searchCount: this.searchCount, successfulSearches: this.successfulSearches };
+        if (verificationResult) {
+          response.verification = { score: verificationResult.score, issues: verificationResult.issues, checked: verificationResult.checked };
+        }
+        return response;
       }
 
       // Extract thinking from the response
@@ -242,11 +318,12 @@ Think about what you need to find, then search. You may need to search multiple 
     const previousSearches = queries.length > 0
       ? `\nYou've already searched for: ${queries.join(', ')}`
       : '';
+    const findings = this.getFindingsSummary();
 
     if (loop < 2) {
-      return `You haven't used any tools yet. Search the knowledge base to find relevant information.${previousSearches}\n\nWhat should you search for?`;
+      return `You haven't used any tools yet. Search the knowledge base to find relevant information.${previousSearches}${findings}\n\nWhat should you search for?`;
     } else {
-      return `Based on what you've found so far, do you have enough to answer? If yes, provide FINAL_ANSWER. If not, search with different terms.${previousSearches}`;
+      return `Based on what you've found so far, do you have enough to answer? If yes, provide FINAL_ANSWER. If not, search with different terms.${previousSearches}${findings}`;
     }
   }
 
@@ -279,7 +356,9 @@ Think about what you need to find, then search. You may need to search multiple 
       handler: async (args) => {
         const query = args.query as string;
         const topK = Math.min((args.top_k as number) || 5, 15);
-        const results = await this.memory.search(query, topK);
+        const source = args.source as string | undefined;
+        const type = args.type as string | undefined;
+        const results = await this.searchEngine.search(query, { topK, source, type });
         this.searchCount++;
 
         if (results.length === 0) {
@@ -287,6 +366,9 @@ Think about what you need to find, then search. You may need to search multiple 
         }
 
         this.successfulSearches++;
+        for (const r of results) {
+          this.addFinding(query, r.text, (r.metadata.source as string) || 'unknown');
+        }
         const formatted = results
           .map((r, i) => {
             const source = r.metadata.source || 'unknown';
@@ -317,7 +399,7 @@ Think about what you need to find, then search. You may need to search multiple 
         if (args.exclude) {
           query += ` NOT ${args.exclude}`;
         }
-        const results = await this.memory.search(query, 5);
+        const results = await this.searchEngine.search(query, { topK: 5 });
         if (results.length === 0) return `No related results found for "${args.topic}".`;
         return results
           .map((r, i) => `[${i + 1}] ${r.metadata.source || 'unknown'}: ${r.text.slice(0, 600)}`)
@@ -342,6 +424,133 @@ Think about what you need to find, then search. You may need to search multiple 
         return `Knowledge base contains ${docs.length} documents from:\n${summary}`;
       },
     });
+  }
+
+  private registerCrossSourceTools(): void {
+    this.tools.register({
+      name: 'search_across_sources',
+      description: 'Search for an entity (person, PR, project) across all data sources. Use when you need to find mentions of something across GitHub, email, calendar, and docs.',
+      parameters: {
+        type: 'object',
+        properties: {
+          entity: {
+            type: 'string',
+            description: 'The entity to search for (e.g., "@alice", "PR #42", "authentication")',
+          },
+          sources: {
+            type: 'string',
+            description: 'Comma-separated sources to search (e.g., "github,email"). Leave empty for all.',
+          },
+        },
+        required: ['entity'],
+      },
+      handler: async (args) => {
+        const entity = args.entity as string;
+        const sources = args.sources ? (args.sources as string).split(',').map(s => s.trim()) : undefined;
+
+        const results = await this.linker.findAcrossSources(entity, sources);
+        if (results.length === 0) {
+          return `No mentions of "${entity}" found across sources.`;
+        }
+
+        return results
+          .map((r, i) => `[${i + 1}] (${r.metadata.source}) ${r.text.slice(0, 400)}`)
+          .join('\n---\n');
+      },
+    });
+
+    this.tools.register({
+      name: 'find_connections',
+      description: 'Find documents related to a search result from other sources. Use this to discover cross-source relationships.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: {
+            type: 'string',
+            description: 'Key terms from a document you want to find connections for',
+          },
+        },
+        required: ['query'],
+      },
+      handler: async (args) => {
+        const query = args.query as string;
+        const results = await this.searchEngine.search(query, { topK: 3 });
+
+        if (results.length === 0) {
+          return `No documents found for "${query}".`;
+        }
+
+        const allConnections: string[] = [];
+        for (const doc of results.slice(0, 2)) {
+          const connections = await this.linker.findConnections(doc);
+          for (const conn of connections) {
+            allConnections.push(
+              `Entity "${conn.entity.value}" (${conn.entity.type}) found in: ${conn.sources.join(', ')}`
+            );
+          }
+        }
+
+        if (allConnections.length === 0) {
+          return `No cross-source connections found for "${query}".`;
+        }
+
+        return allConnections.join('\n');
+      },
+    });
+  }
+
+  private async verifyAnswer(
+    question: string,
+    answer: string,
+    citations: Citation[],
+    allSearchResults: string[]
+  ): Promise<VerificationResult> {
+    if (citations.length === 0) {
+      return { score: 0.3, claims: [], issues: ['No citations provided'], checked: false };
+    }
+
+    const verificationPrompt = `You are a fact-checker. Given a QUESTION, an ANSWER, and the SOURCE EVIDENCE,
+check if each claim in the answer is supported by at least one source.
+
+QUESTION: ${question}
+ANSWER: ${answer}
+SOURCES:
+${allSearchResults.join('\n---\n')}
+
+For each key claim in the answer:
+- SUPPORTED: can point to a specific source
+- PARTIALLY_SUPPORTED: source suggests it but doesn't directly state it
+- UNSUPPORTED: no source backs this claim
+
+Output ONLY valid JSON:
+{
+  "claims": [{"text": "...", "status": "SUPPORTED|PARTIALLY|UNSUPPORTED", "source": "..."}],
+  "overall_score": 0.0-1.0,
+  "issues": ["..."]
+}`;
+
+    try {
+      const result = await this.reasoning.chat(
+        [{ role: 'user', content: verificationPrompt }],
+        [],
+        { temperature: 0.1, maxTokens: 1000 }
+      );
+
+      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      if (jsonMatch) {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return {
+          score: parsed.overall_score || 0.5,
+          claims: parsed.claims || [],
+          issues: parsed.issues || [],
+          checked: true,
+        };
+      }
+    } catch {
+      // Verification failed
+    }
+
+    return { score: 0.5, claims: [], issues: ['Verification parsing failed'], checked: false };
   }
 
   private extractThought(content: string): string {

@@ -1,6 +1,7 @@
 {
   "name": "second-brain",
   "version": "1.0.0",
+  "license": "MIT",
   "description": "AI-powered organizational memory — proactive operators that save time and money",
   "type": "module",
   "scripts": {
@@ -30,6 +31,7 @@
     "mailparser": "^3.7.0",
     "octokit": "^4.0.0",
     "openai": "^4.73.0",
+    "tsx": "^4.19.0",
     "uuid": "^10.0.0"
   },
   "devDependencies": {
@@ -37,8 +39,9 @@
     "@types/express": "^5.0.0",
     "@types/mailparser": "^3.4.6",
     "@types/node": "^22.0.0",
+    "@types/supertest": "^7.2.0",
     "@types/uuid": "^10.0.0",
-    "tsx": "^4.19.0",
+    "supertest": "^7.2.2",
     "typescript": "^5.6.0",
     "vitest": "^4.1.0"
   }

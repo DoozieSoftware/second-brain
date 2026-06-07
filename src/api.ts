@@ -6,6 +6,7 @@ import { SupervisorOperator } from './core/supervisor.js';
 import { metricsCollector } from './core/metrics.js';
 import { alertManager } from './core/alerting.js';
 import { logger } from './core/logger.js';
+import { authMiddleware } from './middleware/auth.js';
 
 const app = express();
 app.use(express.json());
@@ -99,6 +100,9 @@ app.post('/alerts/:id/acknowledge', (req: Request, res: Response) => {
   const ok = alertManager.acknowledge(alertId);
   res.json({ success: ok });
 });
+
+// ─── Auth gates all routes below this line ───
+app.use(authMiddleware);
 
 // ─── Core API ───
 

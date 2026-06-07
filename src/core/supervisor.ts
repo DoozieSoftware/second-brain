@@ -2,6 +2,7 @@ import { ReasoningEngine } from './reasoning.js';
 import { Memory } from './memory.js';
 import { Operator } from './operator.js';
 import type { OperatorResponse } from './operator.js';
+import { SearchEngine } from './search.js';
 import { UserModelManager } from './user-model.js';
 import { SystemModelManager } from './system-model.js';
 import { GitHubOperator } from '../operators/github-operator.js';
@@ -30,6 +31,7 @@ import type { AnalysisReport } from '../learning/meta-learning.js';
 export class SupervisorOperator {
   private reasoning: ReasoningEngine;
   private memory: Memory;
+  private searchEngine: SearchEngine;
   private operators: Map<string, Operator> = new Map();
   private savingsScanner: SavingsScanner;
   private conversationHistory: { role: 'user' | 'assistant'; content: string }[] = [];
@@ -45,6 +47,7 @@ export class SupervisorOperator {
   constructor() {
     this.reasoning = new ReasoningEngine();
     this.memory = new Memory();
+    this.searchEngine = new SearchEngine(this.memory);
     this.savingsScanner = new SavingsScanner(this.reasoning, this.memory);
 
     // Initialize learning components
@@ -63,7 +66,7 @@ export class SupervisorOperator {
   }
 
   async ask(question: string, verbose = false): Promise<OperatorResponse> {
-    const mainOperator = new Operator('supervisor', this.reasoning, this.memory);
+    const mainOperator = new Operator('supervisor', this.reasoning, this.memory, undefined, this.searchEngine);
 
     let context = `You have access to organizational memory from multiple sources: GitHub (repos, PRs, issues), documents, emails, and calendar events. Search across all of them to answer the question comprehensively. Connect related information across sources.`;
 

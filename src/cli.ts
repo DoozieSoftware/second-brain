@@ -9,7 +9,7 @@ const program = new Command();
 program
   .name('second-brain')
   .description('AI-powered organizational memory — proactive operators that save time and money')
-  .version('0.1.0');
+  .version('1.0.0');
 
 program
   .command('chat')

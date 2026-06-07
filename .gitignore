@@ -1,7 +1,9 @@
 node_modules/
 dist/
-data/
+data/*
+!data/.gitkeep
 .env
 *.js.map
 *.d.ts
 .worktrees/
+.qoder/
