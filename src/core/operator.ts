@@ -48,7 +48,8 @@ export interface ReasoningStep {
   observation?: string;
 }
 
-const MAX_REASONING_LOOPS = 8;
+const MAX_REASONING_LOOPS = 5;
+const QUERY_TIMEOUT_MS = parseInt(process.env.QUERY_TIMEOUT_MS || '90000', 10);
 
 const SYSTEM_PROMPT = `You are a reasoning operator — an AI analyst with organizational memory AND personal user context. You think step-by-step like a human who genuinely wants to help.
 
@@ -174,6 +175,7 @@ export class Operator {
   async reason(query: string, context?: string, userContext?: string, verbose = false): Promise<OperatorResponse> {
     const steps: ReasoningStep[] = [];
     const citations: Citation[] = [];
+    const startTime = Date.now();
     this.searchedQueries.clear();
     this.allResults = [];
     this.searchCount = 0;
@@ -203,6 +205,18 @@ export class Operator {
 
     for (let loop = 0; loop < MAX_REASONING_LOOPS; loop++) {
       this.currentTurn = loop;
+
+      // Check timeout
+      const elapsed = Date.now() - startTime;
+      if (elapsed > QUERY_TIMEOUT_MS) {
+        if (verbose) console.log(`\n⏱ Timeout (${(elapsed / 1000).toFixed(1)}s), returning best answer so far`);
+        if (finalAnswer) {
+          return { answer: finalAnswer, citations, confidence, steps, searchCount: this.searchCount, successfulSearches: this.successfulSearches };
+        }
+        finalAnswer = this.buildFallbackAnswer();
+        return { answer: finalAnswer, citations, confidence: 0.2, steps, searchCount: this.searchCount, successfulSearches: this.successfulSearches };
+      }
+
       if (verbose) process.stdout.write(`\n[Loop ${loop + 1}] Thinking...`);
 
       const result = await this.reasoning.chat(
@@ -536,7 +550,24 @@ Output ONLY valid JSON:
         { temperature: 0.1, maxTokens: 1000 }
       );
 
-      const jsonMatch = result.content.match(/\{[\s\S]*\}/);
+      let content = result.content.trim();
+      // Strip markdown code fences
+      content = content.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
+
+      // Try direct JSON parse first
+      try {
+        const parsed = JSON.parse(content);
+        return {
+          score: parsed.overall_score || 0.5,
+          claims: parsed.claims || [],
+          issues: parsed.issues || [],
+          checked: true,
+        };
+      } catch {
+        // Not valid JSON directly, try regex extraction
+      }
+
+      const jsonMatch = content.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
         const parsed = JSON.parse(jsonMatch[0]);
         return {
@@ -546,8 +577,8 @@ Output ONLY valid JSON:
           checked: true,
         };
       }
-    } catch {
-      // Verification failed
+    } catch (error) {
+      console.error('[Verification] Parse error:', error instanceof Error ? error.message : error);
     }
 
     return { score: 0.5, claims: [], issues: ['Verification parsing failed'], checked: false };
@@ -595,15 +626,16 @@ Output ONLY valid JSON:
     // Extract citations
     let citations: Citation[] = [];
     if (citationsStart >= 0) {
-      const citStr = content.slice(citationsStart + 'CITATIONS:'.length).trim();
+      let citStr = content.slice(citationsStart + 'CITATIONS:'.length).trim();
+      // Strip markdown code fences if present
+      citStr = citStr.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
       // Try to find JSON array
-      const jsonMatch = citStr.match(/\[[\s\S]*?\]/);
+      const jsonMatch = citStr.match(/\[[\s\S]*\]/);
       if (jsonMatch) {
         try {
           citations = JSON.parse(jsonMatch[0]);
         } catch {
-          // If JSON parse fails, try to extract citations from text
-          citations = this.extractCitationsFromText(citStr);
+          // JSON parse failed — return empty rather than garbage
         }
       }
     }
@@ -611,25 +643,4 @@ Output ONLY valid JSON:
     return { answer, citations, confidence, steps: [], searchCount: 0, successfulSearches: 0 };
   }
 
-  private extractCitationsFromText(text: string): Citation[] {
-    const citations: Citation[] = [];
-    // Try to find source references in the answer text
-    const patterns = [
-      /(?:from|in|via)\s+([^\s,]+(?:\/[^\s,]+)?)\s*(?:\(([^)]+)\))?/gi,
-      /\[(\d+)\]\s*([^\n]+)/g,
-    ];
-
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
-        citations.push({
-          source: match[1] || 'unknown',
-          type: 'reference',
-          excerpt: match[0].slice(0, 200),
-        });
-      }
-    }
-
-    return citations;
-  }
 }

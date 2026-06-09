@@ -9,6 +9,8 @@ import { GitHubOperator } from '../operators/github-operator.js';
 import { DocsOperator } from '../operators/docs-operator.js';
 import { EmailOperator } from '../operators/email-operator.js';
 import { CalendarOperator } from '../operators/calendar-operator.js';
+import { GDriveOperator } from '../operators/gdrive-operator.js';
+import { DropboxOperator } from '../operators/dropbox-operator.js';
 import { SavingsScanner } from '../proactive/savings-scanner.js';
 import type { SavingsReport } from '../proactive/savings-scanner.js';
 import {
@@ -63,6 +65,8 @@ export class SupervisorOperator {
     this.operators.set('docs', new DocsOperator(this.reasoning, this.memory));
     this.operators.set('email', new EmailOperator(this.reasoning, this.memory));
     this.operators.set('calendar', new CalendarOperator(this.reasoning, this.memory));
+    this.operators.set('gdrive', new GDriveOperator(this.reasoning, this.memory));
+    this.operators.set('dropbox', new DropboxOperator(this.reasoning, this.memory));
   }
 
   async ask(question: string, verbose = false): Promise<OperatorResponse> {
@@ -230,8 +234,10 @@ export class SupervisorOperator {
     return [
       { source: 'github', configured: githubConfigured },
       { source: 'docs', configured: true, docCount },
-      { source: 'email', configured: !!(process.env.IMAP_USER && process.env.IMAP_PASSWORD) },
+      { source: 'email', configured: !!(process.env.IMAP_USER || process.env.EMAIL_ACCOUNTS) },
       { source: 'calendar', configured: !!process.env.GOOGLE_CALENDAR_API_KEY },
+      { source: 'gdrive', configured: !!(process.env.GDRIVE_SERVICE_ACCOUNT_KEY || process.env.GDRIVE_CLIENT_ID) },
+      { source: 'dropbox', configured: !!(process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_APP_KEY) },
     ];
   }
 

@@ -2,11 +2,13 @@ import 'dotenv/config';
 import express, { Request, Response } from 'express';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
+import multer from 'multer';
 import { SupervisorOperator } from './core/supervisor.js';
 import { metricsCollector } from './core/metrics.js';
 import { alertManager } from './core/alerting.js';
 import { logger } from './core/logger.js';
 import { authMiddleware } from './middleware/auth.js';
+import { FileImportConnector } from './connectors/file-import-connector.js';
 
 const app = express();
 app.use(express.json());
@@ -160,6 +162,86 @@ app.get('/status', async (_req: Request, res: Response) => {
   try {
     const status = await supervisor.getStatus();
     res.json({ status });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// ─── File Import ───
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
+const fileImportConnector = new FileImportConnector();
+
+app.post('/import', upload.array('files', 50), async (req: Request, res: Response) => {
+  try {
+    const files = (req.files as Express.Multer.File[]) || [];
+    if (files.length === 0) {
+      res.status(400).json({ error: 'No files uploaded. Use multipart/form-data with field "files".' });
+      return;
+    }
+
+    const label = (req.body?.label as string) || 'import';
+    const imports = files.map(f => ({
+      path: '',
+      buffer: f.buffer,
+      originalName: f.originalname,
+      mimeType: f.mimetype,
+      size: f.size,
+      label,
+    }));
+
+    const docs = await fileImportConnector.parseFiles(imports);
+    // Access memory through supervisor for ingestion
+    const memory = (supervisor as any).memory;
+    const count = await memory.ingest(docs);
+
+    res.json({
+      imported: count,
+      files: files.map(f => f.originalname),
+      documentIds: docs.map(d => d.id),
+    });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/import/url', async (req: Request, res: Response) => {
+  try {
+    const { url, label } = req.body;
+    if (!url) {
+      res.status(400).json({ error: 'url is required' });
+      return;
+    }
+
+    const doc = await fileImportConnector.parseUrl(url, label);
+    if (!doc) {
+      res.status(400).json({ error: 'Could not extract content from URL' });
+      return;
+    }
+
+    const memory = (supervisor as any).memory;
+    await memory.ingest([doc]);
+
+    res.json({ imported: 1, documentId: doc.id, url });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/sources', async (_req: Request, res: Response) => {
+  try {
+    const status = await supervisor.getStatus();
+    res.json({
+      sources: status.map(s => ({
+        ...s,
+        type: ['github', 'email', 'gdrive', 'dropbox'].includes(s.source) ? 'sync' : 'local',
+      })),
+      import: {
+        endpoint: 'POST /import (multipart/form-data, field: "files", optional: "label")',
+        urlImport: 'POST /import/url (JSON: { url, label })',
+        supportedFormats: 'pdf, docx, xlsx, pptx, md, txt, csv, json, html, rtf, epub, and code files',
+      },
+    });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
   }

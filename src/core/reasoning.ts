@@ -19,14 +19,14 @@ export interface ReasoningResult {
   usage: { promptTokens: number; completionTokens: number };
 }
 
-const DEFAULT_MODEL = 'meta-llama/llama-3.2-3b-instruct:free';
+const DEFAULT_MODEL = 'nvidia/nemotron-nano-9b-v2:free';
 
 // Free models to rotate through when rate-limited
 const FREE_MODELS = [
+  'nvidia/nemotron-nano-9b-v2:free',
+  'nvidia/nemotron-3-nano-30b-a3b:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
   'meta-llama/llama-3.2-3b-instruct:free',
-  'qwen/qwen3-4b:free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'mistralai/mistral-small-3.1-24b-instruct:free',
 ];
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';

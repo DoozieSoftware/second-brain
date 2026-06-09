@@ -2,6 +2,25 @@ import { ImapFlow } from 'imapflow';
 import { simpleParser } from 'mailparser';
 import type { MemoryDocument } from '../core/memory.js';
 
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  secure?: boolean;
+}
+
+export interface EmailAccount {
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  secure?: boolean;
+  folders?: string[];
+  smtp?: SmtpConfig;
+}
+
 export interface EmailConfig {
   host: string;
   port: number;
@@ -11,20 +30,56 @@ export interface EmailConfig {
 }
 
 export class EmailConnector {
-  private config: EmailConfig;
+  private accounts: EmailAccount[];
 
-  constructor(config: EmailConfig) {
-    this.config = config;
+  constructor(config: EmailConfig | EmailAccount[]) {
+    if (Array.isArray(config)) {
+      this.accounts = config;
+    } else {
+      this.accounts = [{
+        name: 'default',
+        host: config.host,
+        port: config.port,
+        user: config.user,
+        password: config.password,
+        secure: config.secure,
+        folders: ['INBOX'],
+      }];
+    }
+  }
+
+  getAccounts(): EmailAccount[] {
+    return this.accounts;
   }
 
   async fetchEmails(since?: Date, limit = 100): Promise<MemoryDocument[]> {
+    const allDocs: MemoryDocument[] = [];
+
+    for (const account of this.accounts) {
+      const folders = account.folders || ['INBOX'];
+      for (const folder of folders) {
+        const docs = await this.fetchFromFolder(account, folder, since, limit);
+        allDocs.push(...docs);
+      }
+    }
+
+    console.log(`[Email] Fetched ${allDocs.length} emails from ${this.accounts.length} account(s).`);
+    return allDocs;
+  }
+
+  private async fetchFromFolder(
+    account: EmailAccount,
+    folder: string,
+    since?: Date,
+    limit = 100
+  ): Promise<MemoryDocument[]> {
     const client = new ImapFlow({
-      host: this.config.host,
-      port: this.config.port,
-      secure: this.config.secure ?? true,
+      host: account.host,
+      port: account.port,
+      secure: account.secure ?? true,
       auth: {
-        user: this.config.user,
-        pass: this.config.password,
+        user: account.user,
+        pass: account.password,
       },
       logger: false,
     });
@@ -33,10 +88,9 @@ export class EmailConnector {
 
     try {
       await client.connect();
-      const lock = await client.getMailboxLock('INBOX');
+      const lock = await client.getMailboxLock(folder);
 
       try {
-        // Search for emails since the given date
         const searchCriteria: Record<string, unknown> = {};
         if (since) {
           searchCriteria.since = since;
@@ -55,17 +109,22 @@ export class EmailConnector {
             const parsed = await simpleParser(message.source as Buffer);
             const subject = parsed.subject || '(no subject)';
             const from = parsed.from?.text || 'unknown';
+            const to = typeof parsed.to === 'object' && !Array.isArray(parsed.to) ? (parsed.to as any).text || '' : '';
             const date = parsed.date?.toISOString() || 'unknown';
             const body = (parsed.text || '').slice(0, 3000);
 
+            const accountId = `${account.name}:${folder}`;
             docs.push({
-              id: `email:${message.uid}`,
-              text: `Email from ${from} on ${date}\nSubject: ${subject}\n\n${body}`,
+              id: `email:${accountId}:${message.uid}`,
+              text: `Email from ${from} to ${to} on ${date}\nSubject: ${subject}\n\n${body}`,
               metadata: {
                 source: 'email',
                 type: 'email',
+                account: account.name,
+                folder,
                 subject,
                 from,
+                to,
                 date,
                 uid: message.uid,
               },
@@ -80,10 +139,9 @@ export class EmailConnector {
 
       await client.logout();
     } catch (error) {
-      console.error('Email fetch error:', error instanceof Error ? error.message : error);
+      console.error(`[Email] Fetch error (${account.name}/${folder}):`, error instanceof Error ? error.message : error);
     }
 
-    console.log(`Fetched ${docs.length} emails.`);
     return docs;
   }
 }
