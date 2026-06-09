@@ -3,6 +3,7 @@ import { ReasoningEngine } from '../core/reasoning.js';
 import { Memory } from '../core/memory.js';
 import { ToolRegistry } from '../core/tools.js';
 import { DropboxConnector } from '../connectors/dropbox-connector.js';
+import { ConnectorConfigStore } from '../core/connector-config-store.js';
 
 export class DropboxOperator extends Operator {
   private connector: DropboxConnector | null = null;
@@ -14,6 +15,24 @@ export class DropboxOperator extends Operator {
   }
 
   private initConnector(): void {
+    // 1. Check config store (settings page)
+    const stored = new ConnectorConfigStore().getDropbox();
+    if (stored) {
+      try {
+        this.connector = new DropboxConnector({
+          accessToken: stored.accessToken,
+          appKey: stored.appKey,
+          appSecret: stored.appSecret,
+          refreshToken: stored.refreshToken,
+          paths: stored.paths?.length ? stored.paths : undefined,
+        });
+        return;
+      } catch {
+        // Fall through to env vars
+      }
+    }
+
+    // 2. Fall back to env vars
     const accessToken = process.env.DROPBOX_ACCESS_TOKEN;
     const appKey = process.env.DROPBOX_APP_KEY;
     const appSecret = process.env.DROPBOX_APP_SECRET;

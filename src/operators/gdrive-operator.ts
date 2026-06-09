@@ -3,6 +3,7 @@ import { ReasoningEngine } from '../core/reasoning.js';
 import { Memory } from '../core/memory.js';
 import { ToolRegistry } from '../core/tools.js';
 import { GDriveConnector } from '../connectors/gdrive-connector.js';
+import { ConnectorConfigStore } from '../core/connector-config-store.js';
 
 export class GDriveOperator extends Operator {
   private connector: GDriveConnector | null = null;
@@ -14,6 +15,25 @@ export class GDriveOperator extends Operator {
   }
 
   private initConnector(): void {
+    // 1. Check config store (settings page)
+    const stored = new ConnectorConfigStore().getGDrive();
+    if (stored) {
+      try {
+        this.connector = new GDriveConnector({
+          serviceAccountKey: stored.serviceAccountKey,
+          clientId: stored.clientId,
+          clientSecret: stored.clientSecret,
+          refreshToken: stored.refreshToken,
+          folderId: stored.folderId,
+          includeSharedDrives: stored.includeSharedDrives ?? true,
+        });
+        return;
+      } catch {
+        // Fall through to env vars
+      }
+    }
+
+    // 2. Fall back to env vars
     const keyPath = process.env.GDRIVE_SERVICE_ACCOUNT_KEY;
     const clientId = process.env.GDRIVE_CLIENT_ID;
     const clientSecret = process.env.GDRIVE_CLIENT_SECRET;

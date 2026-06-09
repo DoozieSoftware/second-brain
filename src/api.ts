@@ -10,6 +10,7 @@ import { logger } from './core/logger.js';
 import { authMiddleware } from './middleware/auth.js';
 import { FileImportConnector } from './connectors/file-import-connector.js';
 import { EmailConfigStore } from './core/email-config-store.js';
+import { ConnectorConfigStore } from './core/connector-config-store.js';
 
 const app = express();
 app.use(express.json());
@@ -173,6 +174,7 @@ app.get('/status', async (_req: Request, res: Response) => {
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 const fileImportConnector = new FileImportConnector();
 const emailConfigStore = new EmailConfigStore();
+const connectorConfigStore = new ConnectorConfigStore();
 
 app.post('/import', upload.array('files', 50), async (req: Request, res: Response) => {
   try {
@@ -339,6 +341,259 @@ app.post('/settings/email/:name/test', async (req: Request, res: Response) => {
       success: false,
       error: error instanceof Error ? error.message : 'Connection failed',
     });
+  }
+});
+
+// ─── Google Drive Settings ───
+
+app.get('/settings/gdrive', (_req: Request, res: Response) => {
+  res.json({ config: connectorConfigStore.getGDriveSafe() });
+});
+
+app.post('/settings/gdrive', (req: Request, res: Response) => {
+  try {
+    const { authType, serviceAccountKey, clientId, clientSecret, refreshToken, folderId, includeSharedDrives } = req.body;
+    if (authType === 'service_account' && !serviceAccountKey) {
+      res.status(400).json({ error: 'serviceAccountKey is required for service account auth' });
+      return;
+    }
+    if (authType === 'oauth2' && (!clientId || !clientSecret || !refreshToken)) {
+      res.status(400).json({ error: 'clientId, clientSecret, and refreshToken are required for OAuth2' });
+      return;
+    }
+    connectorConfigStore.setGDrive({
+      authType,
+      serviceAccountKey,
+      clientId,
+      clientSecret,
+      refreshToken,
+      folderId: folderId || undefined,
+      includeSharedDrives: includeSharedDrives ?? true,
+    });
+    res.json({ success: true, config: connectorConfigStore.getGDriveSafe() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/settings/gdrive', (_req: Request, res: Response) => {
+  connectorConfigStore.clearGDrive();
+  res.json({ success: true });
+});
+
+app.post('/settings/gdrive/test', async (_req: Request, res: Response) => {
+  try {
+    const config = connectorConfigStore.getGDrive();
+    if (!config) {
+      res.json({ success: false, error: 'No Google Drive config saved' });
+      return;
+    }
+    const { google } = await import('googleapis');
+    let auth: any;
+    if (config.authType === 'service_account' && config.serviceAccountKey) {
+      const key = JSON.parse(config.serviceAccountKey);
+      auth = new google.auth.GoogleAuth({ credentials: key, scopes: ['https://www.googleapis.com/auth/drive.readonly'] });
+    } else if (config.clientId && config.clientSecret && config.refreshToken) {
+      auth = new google.auth.OAuth2(config.clientId, config.clientSecret);
+      auth.setCredentials({ refresh_token: config.refreshToken });
+    }
+    const drive = google.drive({ version: 'v3', auth });
+    const result = await drive.files.list({ pageSize: 1, fields: 'files(id)' });
+    res.json({ success: true, message: `Connected. Found ${result.data.files?.length ?? 0}+ files.` });
+  } catch (error) {
+    res.json({ success: false, error: error instanceof Error ? error.message : 'Connection failed' });
+  }
+});
+
+// ─── Dropbox Settings ───
+
+app.get('/settings/dropbox', (_req: Request, res: Response) => {
+  res.json({ config: connectorConfigStore.getDropboxSafe() });
+});
+
+app.post('/settings/dropbox', (req: Request, res: Response) => {
+  try {
+    const { authType, accessToken, appKey, appSecret, refreshToken, paths } = req.body;
+    if (authType === 'access_token' && !accessToken) {
+      res.status(400).json({ error: 'accessToken is required' });
+      return;
+    }
+    if (authType === 'oauth2' && (!appKey || !refreshToken)) {
+      res.status(400).json({ error: 'appKey and refreshToken are required for OAuth2' });
+      return;
+    }
+    connectorConfigStore.setDropbox({
+      authType,
+      accessToken,
+      appKey,
+      appSecret,
+      refreshToken,
+      paths: paths || [],
+    });
+    res.json({ success: true, config: connectorConfigStore.getDropboxSafe() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/settings/dropbox', (_req: Request, res: Response) => {
+  connectorConfigStore.clearDropbox();
+  res.json({ success: true });
+});
+
+app.post('/settings/dropbox/test', async (_req: Request, res: Response) => {
+  try {
+    const config = connectorConfigStore.getDropbox();
+    if (!config) {
+      res.json({ success: false, error: 'No Dropbox config saved' });
+      return;
+    }
+    const { Dropbox } = await import('dropbox');
+    let client: any;
+    if (config.authType === 'access_token') {
+      client = new Dropbox({ accessToken: config.accessToken });
+    } else {
+      client = new Dropbox({ clientId: config.appKey, clientSecret: config.appSecret, refreshToken: config.refreshToken });
+    }
+    const result = await client.filesListFolder({ path: '', recursive: false, limit: 1 });
+    res.json({ success: true, message: `Connected. Folder has ${result.result.entries.length}+ items.` });
+  } catch (error) {
+    res.json({ success: false, error: error instanceof Error ? error.message : 'Connection failed' });
+  }
+});
+
+// ─── Google Drive Settings ───
+
+app.get('/settings/gdrive', (_req: Request, res: Response) => {
+  res.json({ config: connectorConfigStore.getGDriveSafe() });
+});
+
+app.post('/settings/gdrive', (req: Request, res: Response) => {
+  try {
+    const config = req.body;
+    if (config.authType === 'service_account' && !config.serviceAccountKey) {
+      res.status(400).json({ error: 'serviceAccountKey is required for service_account auth' });
+      return;
+    }
+    if (config.authType === 'oauth2' && (!config.clientId || !config.clientSecret || !config.refreshToken)) {
+      res.status(400).json({ error: 'clientId, clientSecret, and refreshToken are required for oauth2 auth' });
+      return;
+    }
+    connectorConfigStore.setGDrive({
+      authType: config.authType,
+      serviceAccountKey: config.serviceAccountKey,
+      clientId: config.clientId,
+      clientSecret: config.clientSecret,
+      refreshToken: config.refreshToken,
+      folderId: config.folderId || undefined,
+      includeSharedDrives: config.includeSharedDrives ?? true,
+    });
+    res.json({ success: true, config: connectorConfigStore.getGDriveSafe() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/settings/gdrive', (_req: Request, res: Response) => {
+  connectorConfigStore.clearGDrive();
+  res.json({ success: true });
+});
+
+app.post('/settings/gdrive/test', async (_req: Request, res: Response) => {
+  try {
+    const config = connectorConfigStore.getGDrive();
+    if (!config) {
+      res.json({ success: false, error: 'No Google Drive config set' });
+      return;
+    }
+
+    const { google } = await import('googleapis');
+    let auth: any;
+
+    if (config.authType === 'service_account' && config.serviceAccountKey) {
+      const key = JSON.parse(config.serviceAccountKey);
+      auth = new google.auth.GoogleAuth({
+        credentials: key,
+        scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+      });
+    } else if (config.clientId && config.clientSecret && config.refreshToken) {
+      auth = new google.auth.OAuth2(config.clientId, config.clientSecret);
+      auth.setCredentials({ refresh_token: config.refreshToken });
+    }
+
+    const drive = google.drive({ version: 'v3', auth });
+    const response = await drive.files.list({ pageSize: 1, fields: 'files(id, name)' });
+    const count = response.data.files?.length ?? 0;
+
+    res.json({ success: true, message: `Connected. Found ${count}+ files.` });
+  } catch (error) {
+    res.json({ success: false, error: error instanceof Error ? error.message : 'Connection failed' });
+  }
+});
+
+// ─── Dropbox Settings ───
+
+app.get('/settings/dropbox', (_req: Request, res: Response) => {
+  res.json({ config: connectorConfigStore.getDropboxSafe() });
+});
+
+app.post('/settings/dropbox', (req: Request, res: Response) => {
+  try {
+    const config = req.body;
+    if (config.authType === 'access_token' && !config.accessToken) {
+      res.status(400).json({ error: 'accessToken is required' });
+      return;
+    }
+    if (config.authType === 'oauth2' && (!config.appKey || !config.refreshToken)) {
+      res.status(400).json({ error: 'appKey and refreshToken are required for oauth2 auth' });
+      return;
+    }
+    connectorConfigStore.setDropbox({
+      authType: config.authType,
+      accessToken: config.accessToken,
+      appKey: config.appKey,
+      appSecret: config.appSecret,
+      refreshToken: config.refreshToken,
+      paths: config.paths?.split(',').map((p: string) => p.trim()).filter(Boolean) || undefined,
+    });
+    res.json({ success: true, config: connectorConfigStore.getDropboxSafe() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/settings/dropbox', (_req: Request, res: Response) => {
+  connectorConfigStore.clearDropbox();
+  res.json({ success: true });
+});
+
+app.post('/settings/dropbox/test', async (_req: Request, res: Response) => {
+  try {
+    const config = connectorConfigStore.getDropbox();
+    if (!config) {
+      res.json({ success: false, error: 'No Dropbox config set' });
+      return;
+    }
+
+    const { Dropbox } = await import('dropbox');
+    let client: any;
+
+    if (config.accessToken) {
+      client = new Dropbox({ accessToken: config.accessToken });
+    } else {
+      client = new Dropbox({
+        clientId: config.appKey,
+        clientSecret: config.appSecret,
+        refreshToken: config.refreshToken,
+      });
+    }
+
+    const response = await client.filesListFolder({ path: '', recursive: false, include_deleted: false });
+    const count = response.result?.entries?.length ?? 0;
+
+    res.json({ success: true, message: `Connected. Found ${count} items in root.` });
+  } catch (error) {
+    res.json({ success: false, error: error instanceof Error ? error.message : 'Connection failed' });
   }
 });
 

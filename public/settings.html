@@ -20,8 +20,8 @@
   .form-row.full { grid-template-columns: 1fr; }
   .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
   label { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
-  input, select { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; color: var(--text); font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
-  input:focus { border-color: var(--accent); }
+  input, select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; color: var(--text); font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
+  input:focus, textarea:focus { border-color: var(--accent); }
   input::placeholder { color: #555; }
   .btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border-radius: 8px; border: none; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: all 0.2s; }
   .btn-primary { background: var(--accent); color: white; }
@@ -138,6 +138,108 @@
     <ul class="account-list" id="account-list">
       <li class="empty">Loading...</li>
     </ul>
+  </div>
+
+  <!-- Google Drive -->
+  <div class="card">
+    <h2>Google Drive <small>Sync docs, sheets, and PDFs</small></h2>
+    <div id="gdrive-status" class="empty">Loading...</div>
+    <form id="gdrive-form" style="display:none">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Auth Method</label>
+          <select name="authType" id="gdrive-auth-type">
+            <option value="service_account">Service Account (key file)</option>
+            <option value="oauth2">OAuth2 Client</option>
+          </select>
+        </div>
+        <div class="form-group" id="gdrive-key-group">
+          <label>Service Account Key JSON <small style="color:var(--muted)">(paste the full JSON)</small></label>
+          <textarea name="serviceAccountKey" rows="4" placeholder='{"type":"service_account","project_id":"..."}' style="font-family:monospace;font-size:0.75rem;resize:vertical"></textarea>
+        </div>
+      </div>
+      <div id="gdrive-oauth-fields" style="display:none">
+        <div class="form-row">
+          <div class="form-group">
+            <label>Client ID</label>
+            <input name="clientId" placeholder="xxx.apps.googleusercontent.com">
+          </div>
+          <div class="form-group">
+            <label>Client Secret</label>
+            <input name="clientSecret" type="password" placeholder="Client secret">
+          </div>
+        </div>
+        <div class="form-row full">
+          <div class="form-group">
+            <label>Refresh Token</label>
+            <input name="refreshToken" type="password" placeholder="Refresh token">
+          </div>
+        </div>
+      </div>
+      <div class="form-row full">
+        <div class="form-group">
+          <label>Folder ID <small style="color:var(--muted)">(optional — leave blank for all files)</small></label>
+          <input name="folderId" placeholder="Leave blank to sync all accessible files">
+        </div>
+      </div>
+      <div class="smtp-toggle">
+        <input type="checkbox" id="gdrive-shared" checked>
+        <label for="gdrive-shared" style="cursor:pointer">Include shared drives</label>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Save &amp; Connect</button>
+        <button type="button" class="btn btn-danger btn-sm" id="gdrive-remove" style="display:none">Remove</button>
+      </div>
+    </form>
+  </div>
+
+  <!-- Dropbox -->
+  <div class="card">
+    <h2>Dropbox <small>Sync documents and files</small></h2>
+    <div id="dropbox-status" class="empty">Loading...</div>
+    <form id="dropbox-form" style="display:none">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Auth Method</label>
+          <select name="authType" id="dropbox-auth-type">
+            <option value="access_token">Access Token</option>
+            <option value="oauth2">OAuth2 (refresh token)</option>
+          </select>
+        </div>
+        <div class="form-group" id="dropbox-token-group">
+          <label>Access Token</label>
+          <input name="accessToken" type="password" placeholder="sl.xxx">
+        </div>
+      </div>
+      <div id="dropbox-oauth-fields" style="display:none">
+        <div class="form-row">
+          <div class="form-group">
+            <label>App Key</label>
+            <input name="appKey" placeholder="App key">
+          </div>
+          <div class="form-group">
+            <label>App Secret</label>
+            <input name="appSecret" type="password" placeholder="App secret">
+          </div>
+        </div>
+        <div class="form-row full">
+          <div class="form-group">
+            <label>Refresh Token</label>
+            <input name="refreshToken" type="password" placeholder="Refresh token">
+          </div>
+        </div>
+      </div>
+      <div class="form-row full">
+        <div class="form-group">
+          <label>Sync Paths <small style="color:var(--muted)">(comma-separated, leave blank for root)</small></label>
+          <input name="paths" placeholder="/Documents, /Projects">
+        </div>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Save &amp; Connect</button>
+        <button type="button" class="btn btn-danger btn-sm" id="dropbox-remove" style="display:none">Remove</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -270,6 +372,142 @@ async function removeAccount(name) {
 }
 
 loadAccounts();
+
+// ─── Google Drive ───
+const gdriveForm = document.getElementById('gdrive-form');
+const gdriveStatus = document.getElementById('gdrive-status');
+const gdriveAuthType = document.getElementById('gdrive-auth-type');
+const gdriveKeyGroup = document.getElementById('gdrive-key-group');
+const gdriveOauthFields = document.getElementById('gdrive-oauth-fields');
+const gdriveRemove = document.getElementById('gdrive-remove');
+
+gdriveAuthType.addEventListener('change', () => {
+  const isService = gdriveAuthType.value === 'service_account';
+  gdriveKeyGroup.style.display = isService ? '' : 'none';
+  gdriveOauthFields.style.display = isService ? 'none' : 'block';
+});
+
+async function loadGDrive() {
+  try {
+    const res = await fetch('/settings/gdrive');
+    const data = await res.json();
+    if (data.config) {
+      gdriveStatus.innerHTML = '<span class="badge badge-success">configured</span> Auth: ' + data.config.authType + (data.config.folderId ? ' · Folder: ' + esc(data.config.folderId) : '');
+      gdriveForm.style.display = 'block';
+      gdriveRemove.style.display = '';
+      gdriveAuthType.value = data.config.authType || 'service_account';
+      gdriveAuthType.dispatchEvent(new Event('change'));
+      if (data.config.folderId) gdriveForm.folderId.value = data.config.folderId;
+    } else {
+      gdriveStatus.innerHTML = '<span class="badge badge-pending">not configured</span>';
+      gdriveForm.style.display = 'block';
+      gdriveRemove.style.display = 'none';
+    }
+  } catch (e) { gdriveStatus.textContent = 'Failed to load'; }
+}
+
+gdriveForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(gdriveForm);
+  const body = {
+    authType: fd.get('authType'),
+    serviceAccountKey: fd.get('serviceAccountKey') || undefined,
+    clientId: fd.get('clientId') || undefined,
+    clientSecret: fd.get('clientSecret') || undefined,
+    refreshToken: fd.get('refreshToken') || undefined,
+    folderId: fd.get('folderId') || undefined,
+    includeSharedDrives: document.getElementById('gdrive-shared').checked,
+  };
+  const res = await fetch('/settings/gdrive', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (data.success) { showToast('Google Drive saved'); testGDrive(); }
+  else showToast(data.error || 'Failed', true);
+});
+
+gdriveRemove.addEventListener('click', async () => {
+  if (!confirm('Remove Google Drive config?')) return;
+  await fetch('/settings/gdrive', { method: 'DELETE' });
+  showToast('Google Drive removed');
+  loadGDrive();
+});
+
+async function testGDrive() {
+  const badge = gdriveStatus.querySelector('.badge');
+  if (badge) { badge.textContent = 'testing...'; badge.className = 'badge badge-pending'; }
+  const res = await fetch('/settings/gdrive/test', { method: 'POST' });
+  const data = await res.json();
+  if (data.success) { showToast(data.message); if (badge) { badge.textContent = 'connected'; badge.className = 'badge badge-success'; } }
+  else { showToast(data.error, true); if (badge) { badge.textContent = 'failed'; badge.className = 'badge badge-error'; } }
+}
+
+// ─── Dropbox ───
+const dropboxForm = document.getElementById('dropbox-form');
+const dropboxStatus = document.getElementById('dropbox-status');
+const dropboxAuthType = document.getElementById('dropbox-auth-type');
+const dropboxTokenGroup = document.getElementById('dropbox-token-group');
+const dropboxOauthFields = document.getElementById('dropbox-oauth-fields');
+const dropboxRemove = document.getElementById('dropbox-remove');
+
+dropboxAuthType.addEventListener('change', () => {
+  const isToken = dropboxAuthType.value === 'access_token';
+  dropboxTokenGroup.style.display = isToken ? '' : 'none';
+  dropboxOauthFields.style.display = isToken ? 'none' : 'block';
+});
+
+async function loadDropbox() {
+  try {
+    const res = await fetch('/settings/dropbox');
+    const data = await res.json();
+    if (data.config) {
+      dropboxStatus.innerHTML = '<span class="badge badge-success">configured</span> Auth: ' + data.config.authType + (data.config.paths?.length ? ' · Paths: ' + data.config.paths.join(', ') : '');
+      dropboxForm.style.display = 'block';
+      dropboxRemove.style.display = '';
+      dropboxAuthType.value = data.config.authType || 'access_token';
+      dropboxAuthType.dispatchEvent(new Event('change'));
+      if (data.config.paths?.length) dropboxForm.paths.value = data.config.paths.join(', ');
+    } else {
+      dropboxStatus.innerHTML = '<span class="badge badge-pending">not configured</span>';
+      dropboxForm.style.display = 'block';
+      dropboxRemove.style.display = 'none';
+    }
+  } catch (e) { dropboxStatus.textContent = 'Failed to load'; }
+}
+
+dropboxForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(dropboxForm);
+  const body = {
+    authType: fd.get('authType'),
+    accessToken: fd.get('accessToken') || undefined,
+    appKey: fd.get('appKey') || undefined,
+    appSecret: fd.get('appSecret') || undefined,
+    refreshToken: fd.get('refreshToken') || undefined,
+    paths: (fd.get('paths') || '').split(',').map(s => s.trim()).filter(Boolean),
+  };
+  const res = await fetch('/settings/dropbox', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (data.success) { showToast('Dropbox saved'); testDropbox(); }
+  else showToast(data.error || 'Failed', true);
+});
+
+dropboxRemove.addEventListener('click', async () => {
+  if (!confirm('Remove Dropbox config?')) return;
+  await fetch('/settings/dropbox', { method: 'DELETE' });
+  showToast('Dropbox removed');
+  loadDropbox();
+});
+
+async function testDropbox() {
+  const badge = dropboxStatus.querySelector('.badge');
+  if (badge) { badge.textContent = 'testing...'; badge.className = 'badge badge-pending'; }
+  const res = await fetch('/settings/dropbox/test', { method: 'POST' });
+  const data = await res.json();
+  if (data.success) { showToast(data.message); if (badge) { badge.textContent = 'connected'; badge.className = 'badge badge-success'; } }
+  else { showToast(data.error, true); if (badge) { badge.textContent = 'failed'; badge.className = 'badge badge-error'; } }
+}
+
+loadGDrive();
+loadDropbox();
 </script>
 </body>
 </html>
