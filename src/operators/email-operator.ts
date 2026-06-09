@@ -5,30 +5,42 @@ import { ToolRegistry } from '../core/tools.js';
 import { EmailConnector } from '../connectors/email-connector.js';
 import type { EmailAccount } from '../connectors/email-connector.js';
 import { SmtpConnector } from '../connectors/smtp-connector.js';
+import { EmailConfigStore } from '../core/email-config-store.js';
 
 export class EmailOperator extends Operator {
   private emailConnector: EmailConnector | null = null;
   private smtpConnector: SmtpConnector | null = null;
   private accounts: EmailAccount[] = [];
+  private configStore: EmailConfigStore;
 
   constructor(reasoning: ReasoningEngine, memory: Memory) {
     const tools = new ToolRegistry();
     super('email', reasoning, memory, tools);
+    this.configStore = new EmailConfigStore();
     this.parseAccounts();
     this.registerTools();
   }
 
   private parseAccounts(): void {
-    const accountsJson = process.env.EMAIL_ACCOUNTS;
-    if (accountsJson) {
-      try {
-        this.accounts = JSON.parse(accountsJson);
-      } catch {
-        console.error('[Email] Failed to parse EMAIL_ACCOUNTS JSON');
+    // 1. Read from config store (settings page)
+    const storedAccounts = this.configStore.getAll();
+    if (storedAccounts.length > 0) {
+      this.accounts = storedAccounts;
+    }
+
+    // 2. Fall back to EMAIL_ACCOUNTS env var
+    if (this.accounts.length === 0) {
+      const accountsJson = process.env.EMAIL_ACCOUNTS;
+      if (accountsJson) {
+        try {
+          this.accounts = JSON.parse(accountsJson);
+        } catch {
+          console.error('[Email] Failed to parse EMAIL_ACCOUNTS JSON');
+        }
       }
     }
 
-    // Fallback to single-account IMAP_* vars
+    // 3. Fall back to single-account IMAP_* vars
     if (this.accounts.length === 0 && process.env.IMAP_USER && process.env.IMAP_PASSWORD) {
       this.accounts = [{
         name: 'default',

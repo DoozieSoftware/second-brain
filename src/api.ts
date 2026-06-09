@@ -9,6 +9,7 @@ import { alertManager } from './core/alerting.js';
 import { logger } from './core/logger.js';
 import { authMiddleware } from './middleware/auth.js';
 import { FileImportConnector } from './connectors/file-import-connector.js';
+import { EmailConfigStore } from './core/email-config-store.js';
 
 const app = express();
 app.use(express.json());
@@ -171,6 +172,7 @@ app.get('/status', async (_req: Request, res: Response) => {
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 100 * 1024 * 1024 } });
 const fileImportConnector = new FileImportConnector();
+const emailConfigStore = new EmailConfigStore();
 
 app.post('/import', upload.array('files', 50), async (req: Request, res: Response) => {
   try {
@@ -244,6 +246,99 @@ app.get('/sources', async (_req: Request, res: Response) => {
     });
   } catch (error) {
     res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// ─── Email Settings ───
+
+app.get('/settings', async (_req: Request, res: Response) => {
+  try {
+    const html = await readFile(join(process.cwd(), 'public', 'settings.html'), 'utf-8');
+    res.type('html').send(html);
+  } catch {
+    res.status(404).send('Settings page not found.');
+  }
+});
+
+app.get('/settings/email', (_req: Request, res: Response) => {
+  res.json({ accounts: emailConfigStore.getAllSafe() });
+});
+
+app.post('/settings/email', (req: Request, res: Response) => {
+  try {
+    const { name, host, port, user, password, folders, smtp } = req.body;
+    if (!name || !host || !user || !password) {
+      res.status(400).json({ error: 'name, host, user, and password are required' });
+      return;
+    }
+    emailConfigStore.add({
+      name,
+      host,
+      port: parseInt(port) || 993,
+      user,
+      password,
+      folders: folders || ['INBOX'],
+      smtp: smtp?.host ? {
+        host: smtp.host,
+        port: parseInt(smtp.port) || 587,
+        user: smtp.user || user,
+        password: smtp.password || password,
+      } : undefined,
+    });
+    res.json({ success: true, accounts: emailConfigStore.getAllSafe() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/settings/email/:name', (req: Request, res: Response) => {
+  try {
+    const name = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const removed = emailConfigStore.remove(name);
+    if (!removed) {
+      res.status(404).json({ error: `Account "${name}" not found` });
+      return;
+    }
+    res.json({ success: true, accounts: emailConfigStore.getAllSafe() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/settings/email/:name/test', async (req: Request, res: Response) => {
+  try {
+    const name = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const account = emailConfigStore.getByName(name);
+    if (!account) {
+      res.status(404).json({ error: `Account "${name}" not found` });
+      return;
+    }
+
+    const { ImapFlow } = await import('imapflow');
+    const client = new ImapFlow({
+      host: account.host,
+      port: account.port,
+      secure: account.secure ?? true,
+      auth: { user: account.user, pass: account.password },
+      logger: false,
+    });
+
+    await client.connect();
+    const lock = await client.getMailboxLock('INBOX');
+    const messageCount = (lock as any).status?.messages ?? 'unknown';
+    lock.release();
+    await client.logout();
+
+    res.json({
+      success: true,
+      message: `Connected to ${account.host}`,
+      mailboxCount: messageCount,
+    });
+  } catch (error) {
+    res.json({
+      success: false,
+      error: error instanceof Error ? error.message : 'Connection failed',
+    });
   }
 });
 

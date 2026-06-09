@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings - Second Brain</title>
+<style>
+  :root { --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a; --text: #e1e4eb; --muted: #8b8fa3; --accent: #6366f1; --accent-hover: #818cf8; --danger: #ef4444; --success: #22c55e; --warn: #f59e0b; }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+  .container { max-width: 800px; margin: 0 auto; padding: 2rem 1rem; }
+  header { display: flex; align-items: center; gap: 1rem; margin-bottom: 2rem; }
+  header h1 { font-size: 1.5rem; font-weight: 600; }
+  header a { color: var(--muted); text-decoration: none; font-size: 0.875rem; }
+  header a:hover { color: var(--text); }
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 1.5rem; margin-bottom: 1.5rem; }
+  .card h2 { font-size: 1.125rem; margin-bottom: 1rem; }
+  .card h2 small { color: var(--muted); font-weight: 400; font-size: 0.8rem; margin-left: 0.5rem; }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 0.75rem; }
+  .form-row.full { grid-template-columns: 1fr; }
+  .form-group { display: flex; flex-direction: column; gap: 0.25rem; }
+  label { font-size: 0.8rem; color: var(--muted); font-weight: 500; }
+  input, select { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 0.5rem 0.75rem; color: var(--text); font-size: 0.875rem; outline: none; transition: border-color 0.2s; }
+  input:focus { border-color: var(--accent); }
+  input::placeholder { color: #555; }
+  .btn { display: inline-flex; align-items: center; gap: 0.5rem; padding: 0.5rem 1rem; border-radius: 8px; border: none; font-size: 0.875rem; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-danger { background: transparent; color: var(--danger); border: 1px solid var(--danger); }
+  .btn-danger:hover { background: var(--danger); color: white; }
+  .btn-sm { padding: 0.35rem 0.75rem; font-size: 0.8rem; }
+  .btn-ghost { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+  .btn-ghost:hover { color: var(--text); border-color: var(--muted); }
+  .actions { display: flex; gap: 0.75rem; margin-top: 1rem; }
+  .account-list { list-style: none; }
+  .account-item { display: flex; align-items: center; justify-content: space-between; padding: 1rem; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 0.5rem; transition: border-color 0.2s; }
+  .account-item:hover { border-color: var(--accent); }
+  .account-info { flex: 1; }
+  .account-info .name { font-weight: 600; font-size: 0.95rem; }
+  .account-info .details { color: var(--muted); font-size: 0.8rem; margin-top: 0.25rem; }
+  .account-actions { display: flex; gap: 0.5rem; }
+  .badge { display: inline-block; padding: 0.15rem 0.5rem; border-radius: 4px; font-size: 0.7rem; font-weight: 600; }
+  .badge-success { background: rgba(34,197,94,0.15); color: var(--success); }
+  .badge-error { background: rgba(239,68,68,0.15); color: var(--danger); }
+  .badge-pending { background: rgba(245,158,11,0.15); color: var(--warn); }
+  .empty { text-align: center; color: var(--muted); padding: 2rem; font-size: 0.9rem; }
+  .toast { position: fixed; bottom: 1.5rem; right: 1.5rem; background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 0.75rem 1rem; font-size: 0.875rem; display: none; z-index: 100; max-width: 350px; }
+  .toast.show { display: block; animation: slideIn 0.3s ease; }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  .section-title { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin-bottom: 0.5rem; margin-top: 1rem; }
+  .smtp-toggle { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+  .smtp-toggle input[type="checkbox"] { width: 16px; height: 16px; }
+  #smtp-fields { display: none; margin-top: 0.75rem; }
+  .folder-tags { display: flex; flex-wrap: wrap; gap: 0.25rem; margin-top: 0.25rem; }
+  .folder-tag { background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 0.1rem 0.4rem; font-size: 0.7rem; }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>Settings</h1>
+    <a href="/">Back to Dashboard</a>
+  </header>
+
+  <div class="card">
+    <h2>Email Accounts <small>IMAP mailboxes for analysis</small></h2>
+
+    <form id="add-form">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Account Name</label>
+          <input name="name" placeholder="e.g. work, team-eng, personal" required>
+        </div>
+        <div class="form-group">
+          <label>IMAP Host</label>
+          <input name="host" placeholder="e.g. imap.gmail.com" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Port</label>
+          <input name="port" type="number" value="993" placeholder="993">
+        </div>
+        <div class="form-group">
+          <label>Username / Email</label>
+          <input name="user" placeholder="you@company.com" required>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label>Password / App Password</label>
+          <input name="password" type="password" placeholder="App password" required>
+        </div>
+        <div class="form-group">
+          <label>Folders <small style="color:var(--muted)">(comma-separated)</small></label>
+          <input name="folders" placeholder="INBOX, Important" value="INBOX">
+        </div>
+      </div>
+
+      <div class="smtp-toggle">
+        <input type="checkbox" id="enable-smtp">
+        <label for="enable-smtp" style="cursor:pointer">Enable SMTP sending</label>
+      </div>
+
+      <div id="smtp-fields">
+        <div class="section-title">SMTP Settings</div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>SMTP Host</label>
+            <input name="smtp_host" placeholder="e.g. smtp.gmail.com">
+          </div>
+          <div class="form-group">
+            <label>SMTP Port</label>
+            <input name="smtp_port" type="number" value="587" placeholder="587">
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>SMTP User <small style="color:var(--muted)">(defaults to IMAP user)</small></label>
+            <input name="smtp_user" placeholder="Leave blank to use IMAP user">
+          </div>
+          <div class="form-group">
+            <label>SMTP Password <small style="color:var(--muted)">(defaults to IMAP password)</small></label>
+            <input name="smtp_password" type="password" placeholder="Leave blank to use IMAP password">
+          </div>
+        </div>
+      </div>
+
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Add Mailbox</button>
+        <button type="reset" class="btn btn-ghost">Clear</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>Configured Mailboxes</h2>
+    <ul class="account-list" id="account-list">
+      <li class="empty">Loading...</li>
+    </ul>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const form = document.getElementById('add-form');
+const list = document.getElementById('account-list');
+const toast = document.getElementById('toast');
+const smtpToggle = document.getElementById('enable-smtp');
+const smtpFields = document.getElementById('smtp-fields');
+
+smtpToggle.addEventListener('change', () => {
+  smtpFields.style.display = smtpToggle.checked ? 'block' : 'none';
+});
+
+function showToast(msg, isError = false) {
+  toast.textContent = msg;
+  toast.style.borderColor = isError ? 'var(--danger)' : 'var(--success)';
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 3500);
+}
+
+async function loadAccounts() {
+  try {
+    const res = await fetch('/settings/email');
+    const data = await res.json();
+    renderAccounts(data.accounts || []);
+  } catch (e) {
+    list.innerHTML = '<li class="empty">Failed to load accounts</li>';
+  }
+}
+
+function renderAccounts(accounts) {
+  if (accounts.length === 0) {
+    list.innerHTML = '<li class="empty">No mailboxes configured yet. Add one above.</li>';
+    return;
+  }
+  list.innerHTML = accounts.map(a => `
+    <li class="account-item">
+      <div class="account-info">
+        <div class="name">${esc(a.name)} <span class="badge badge-pending" id="badge-${esc(a.name)}">untested</span></div>
+        <div class="details">${esc(a.host)}:${a.port} &middot; ${esc(a.user)}</div>
+        <div class="folder-tags">${(a.folders || ['INBOX']).map(f => `<span class="folder-tag">${esc(f)}</span>`).join('')}</div>
+        ${a.smtp ? `<div class="details" style="margin-top:0.25rem">SMTP: ${esc(a.smtp?.host || '')}:${a.smtp?.port || 587}</div>` : ''}
+      </div>
+      <div class="account-actions">
+        <button class="btn btn-ghost btn-sm" onclick="testAccount('${esc(a.name)}')">Test</button>
+        <button class="btn btn-danger btn-sm" onclick="removeAccount('${esc(a.name)}')">Remove</button>
+      </div>
+    </li>
+  `).join('');
+}
+
+function esc(s) { return String(s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fd = new FormData(form);
+  const body = {
+    name: fd.get('name'),
+    host: fd.get('host'),
+    port: fd.get('port') || 993,
+    user: fd.get('user'),
+    password: fd.get('password'),
+    folders: (fd.get('folders') || 'INBOX').split(',').map(s => s.trim()).filter(Boolean),
+  };
+  if (smtpToggle.checked) {
+    body.smtp = {
+      host: fd.get('smtp_host') || `smtp.${fd.get('host').replace('imap.', '')}`,
+      port: fd.get('smtp_port') || 587,
+      user: fd.get('smtp_user') || '',
+      password: fd.get('smtp_password') || '',
+    };
+  }
+  try {
+    const res = await fetch('/settings/email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      showToast(`Mailbox "${body.name}" added`);
+      form.reset();
+      smtpToggle.checked = false;
+      smtpFields.style.display = 'none';
+      loadAccounts();
+    } else {
+      showToast(data.error || 'Failed to add', true);
+    }
+  } catch (err) {
+    showToast('Network error', true);
+  }
+});
+
+async function testAccount(name) {
+  const badge = document.getElementById(`badge-${name}`);
+  if (badge) { badge.textContent = 'testing...'; badge.className = 'badge badge-pending'; }
+  try {
+    const res = await fetch(`/settings/email/${encodeURIComponent(name)}/test`, { method: 'POST' });
+    const data = await res.json();
+    if (data.success) {
+      showToast(`Connected! ${data.mailboxCount ?? ''} messages`);
+      if (badge) { badge.textContent = 'connected'; badge.className = 'badge badge-success'; }
+    } else {
+      showToast(`Failed: ${data.error}`, true);
+      if (badge) { badge.textContent = 'failed'; badge.className = 'badge badge-error'; }
+    }
+  } catch (err) {
+    showToast('Network error', true);
+    if (badge) { badge.textContent = 'error'; badge.className = 'badge badge-error'; }
+  }
+}
+
+async function removeAccount(name) {
+  if (!confirm(`Remove mailbox "${name}"?`)) return;
+  try {
+    const res = await fetch(`/settings/email/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (res.ok) {
+      showToast(`Removed "${name}"`);
+      loadAccounts();
+    } else {
+      const data = await res.json();
+      showToast(data.error || 'Failed', true);
+    }
+  } catch (err) {
+    showToast('Network error', true);
+  }
+}
+
+loadAccounts();
+</script>
+</body>
+</html>

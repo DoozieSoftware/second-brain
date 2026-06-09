@@ -11,6 +11,7 @@ import { EmailOperator } from '../operators/email-operator.js';
 import { CalendarOperator } from '../operators/calendar-operator.js';
 import { GDriveOperator } from '../operators/gdrive-operator.js';
 import { DropboxOperator } from '../operators/dropbox-operator.js';
+import { EmailConfigStore } from './email-config-store.js';
 import { SavingsScanner } from '../proactive/savings-scanner.js';
 import type { SavingsReport } from '../proactive/savings-scanner.js';
 import {
@@ -234,7 +235,7 @@ export class SupervisorOperator {
     return [
       { source: 'github', configured: githubConfigured },
       { source: 'docs', configured: true, docCount },
-      { source: 'email', configured: !!(process.env.IMAP_USER || process.env.EMAIL_ACCOUNTS) },
+      { source: 'email', configured: !!(process.env.IMAP_USER || process.env.EMAIL_ACCOUNTS || new EmailConfigStore().getAll().length > 0) },
       { source: 'calendar', configured: !!process.env.GOOGLE_CALENDAR_API_KEY },
       { source: 'gdrive', configured: !!(process.env.GDRIVE_SERVICE_ACCOUNT_KEY || process.env.GDRIVE_CLIENT_ID) },
       { source: 'dropbox', configured: !!(process.env.DROPBOX_ACCESS_TOKEN || process.env.DROPBOX_APP_KEY) },
