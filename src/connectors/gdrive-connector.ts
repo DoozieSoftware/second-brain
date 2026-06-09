@@ -4,6 +4,7 @@ import type { MemoryDocument } from '../core/memory.js';
 
 export interface GDriveConfig {
   serviceAccountKeyPath?: string;
+  serviceAccountKey?: string;
   clientId?: string;
   clientSecret?: string;
   refreshToken?: string;
@@ -37,7 +38,15 @@ export class GDriveConnector {
   private getAuth(): any {
     if (this.auth) return this.auth;
 
-    if (this.config.serviceAccountKeyPath) {
+    if (this.config.serviceAccountKey) {
+      const key = typeof this.config.serviceAccountKey === 'string'
+        ? JSON.parse(this.config.serviceAccountKey)
+        : this.config.serviceAccountKey;
+      this.auth = new google.auth.GoogleAuth({
+        credentials: key,
+        scopes: ['https://www.googleapis.com/auth/drive.readonly'],
+      });
+    } else if (this.config.serviceAccountKeyPath) {
       if (!existsSync(this.config.serviceAccountKeyPath)) {
         throw new Error(`Service account key file not found: ${this.config.serviceAccountKeyPath}`);
       }
