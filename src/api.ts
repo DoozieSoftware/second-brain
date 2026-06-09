@@ -243,7 +243,7 @@ app.get('/sources', async (_req: Request, res: Response) => {
       import: {
         endpoint: 'POST /import (multipart/form-data, field: "files", optional: "label")',
         urlImport: 'POST /import/url (JSON: { url, label })',
-        supportedFormats: 'pdf, docx, xlsx, pptx, md, txt, csv, json, html, rtf, epub, and code files',
+        supportedFormats: 'pdf, docx, xlsx, pptx, md, txt (incl. WhatsApp chat exports), csv, json, html, rtf, epub, and code files',
       },
     });
   } catch (error) {

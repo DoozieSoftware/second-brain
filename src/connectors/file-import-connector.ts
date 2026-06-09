@@ -2,6 +2,12 @@ import { readFileSync } from 'fs';
 import { extname, basename } from 'path';
 import type { MemoryDocument } from '../core/memory.js';
 
+const IOS_TS = /^\[\d{1,2}\/\d{1,2}\/\d{2,4}, \d{1,2}:\d{2}(?::\d{2})\]/;
+const ANDROID_TS = /^\d{1,2}\/\d{1,2}\/\d{2,4}, \d{1,2}:\d{2}/;
+const MSG_IOS = /^\[(\d{1,2}\/\d{1,2}\/\d{2,4}), (\d{1,2}:\d{2}(?::\d{2})\s*(?:am|pm)?)\]\s*([^:]+?):\s([\s\S]*?)$/i;
+const MSG_ANDROID = /^(\d{1,2}\/\d{1,2}\/\d{2,4}), (\d{1,2}:\d{2}\s*(?:am|pm)?)\s*-\s*([^:]+?):\s([\s\S]*?)$/i;
+const SYSTEM_PATTERNS = /(?:end-to-end encrypted|Messages and calls are|added|removed|changed the subject|created group|left|security code changed|deleted this message)/i;
+
 export interface FileImport {
   path: string;
   buffer?: Buffer;
@@ -39,6 +45,9 @@ export class FileImportConnector {
 
     if (TEXT_EXTENSIONS.has(ext)) {
       text = content.toString('utf-8');
+      if (ext === '.txt' && this.isWhatsApp(text)) {
+        return this.parseWhatsApp(text, name, label);
+      }
     } else if (ext === '.pdf') {
       text = await this.parsePdf(content);
     } else if (ext === '.docx') {
@@ -160,6 +169,72 @@ export class FileImportConnector {
     } finally {
       unlinkSync(tmpPath);
     }
+  }
+
+  private isWhatsApp(text: string): boolean {
+    const sample = text.slice(0, 500);
+    const lines = sample.split('\n').filter(l => l.trim().length > 0);
+    if (lines.length === 0) return false;
+    const matched = lines.filter(l => IOS_TS.test(l) || ANDROID_TS.test(l));
+    return matched.length >= Math.min(2, lines.length);
+  }
+
+  private parseWhatsApp(raw: string, chatName: string, label: string): MemoryDocument {
+    const lines = raw.split('\n');
+    const messages: { date: string; time: string; sender: string; text: string }[] = [];
+    const msgRegex = /^\[?(\d{1,2}\/\d{1,2}\/\d{2,4}),\s*(\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?)\]?\s*-?\s*([^:]+?):\s(.*)/i;
+
+    for (const line of lines) {
+      const m = line.match(msgRegex);
+      if (m) {
+        const [, date, time, sender, text] = m;
+        if (SYSTEM_PATTERNS.test(text)) continue;
+        if (/<Media omitted>|image omitted|video omitted|audio omitted|sticker omitted|GIF omitted|document omitted/i.test(text)) continue;
+        messages.push({ date: date.trim(), time: time.trim(), sender: sender.trim(), text: text.trim() });
+      } else if (messages.length > 0 && line.trim()) {
+        messages[messages.length - 1].text += '\n' + line;
+      }
+    }
+
+    if (messages.length === 0) {
+      return {
+        id: `import:whatsapp:${chatName}:${Date.now()}`,
+        text: `${chatName}\n\n${raw.slice(0, 50000)}`,
+        metadata: {
+          source: 'whatsapp',
+          type: 'chat',
+          chat_name: chatName,
+          label: label || 'whatsapp',
+          message_count: 0,
+          date: new Date().toISOString(),
+        },
+      };
+    }
+
+    const participants = [...new Set(messages.map(m => m.sender))];
+    const dates = messages.map(m => m.date);
+    const dateRange = `${dates[0]} to ${dates[dates.length - 1]}`;
+
+    const transcript = messages
+      .map(m => `[${m.date} ${m.time}] ${m.sender}: ${m.text}`)
+      .join('\n');
+
+    const truncated = transcript.slice(0, 50000);
+
+    return {
+      id: `import:whatsapp:${chatName}:${Date.now()}`,
+      text: `${chatName}\nChat: ${chatName} · ${participants.length} participants · ${messages.length} messages · ${dateRange}\n\n${truncated}`,
+      metadata: {
+        source: 'whatsapp',
+        type: 'chat',
+        chat_name: chatName,
+        label: label || 'whatsapp',
+        message_count: messages.length,
+        participants: participants.join(', '),
+        date_range: dateRange,
+        date: new Date().toISOString(),
+      },
+    };
   }
 
   async parseUrl(url: string, label?: string): Promise<MemoryDocument | null> {

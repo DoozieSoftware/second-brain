@@ -241,6 +241,31 @@
       </div>
     </form>
   </div>
+
+  <!-- WhatsApp Chat Import -->
+  <div class="card">
+    <h2>WhatsApp Chat Import <small>Upload exported .txt chat files</small></h2>
+    <p style="color:var(--muted);margin-bottom:1rem;font-size:0.85rem">
+      Export chats from WhatsApp (Settings → Chat → Export Chat → Without Media), then upload the .txt files here.
+      iOS and Android formats are auto-detected.
+    </p>
+    <form id="whatsapp-form">
+      <div class="form-row">
+        <div class="form-group">
+          <label>Chat Files (.txt)</label>
+          <input type="file" name="files" id="whatsapp-files" accept=".txt" multiple required style="padding:0.4rem">
+        </div>
+        <div class="form-group">
+          <label>Label <small style="color:var(--muted)">(optional)</small></label>
+          <input name="label" placeholder="e.g. team-chat, family, project-x">
+        </div>
+      </div>
+      <div class="actions">
+        <button type="submit" class="btn btn-primary">Upload &amp; Import</button>
+      </div>
+    </form>
+    <div id="whatsapp-results" style="margin-top:1rem"></div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -508,6 +533,48 @@ async function testDropbox() {
 
 loadGDrive();
 loadDropbox();
+
+// ─── WhatsApp Import ───
+const whatsappForm = document.getElementById('whatsapp-form');
+const whatsappResults = document.getElementById('whatsapp-results');
+
+whatsappForm.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const fileInput = document.getElementById('whatsapp-files');
+  const files = fileInput.files;
+  if (!files.length) return showToast('Select at least one .txt file', true);
+
+  const label = whatsappForm.label.value || 'whatsapp';
+  const fd = new FormData();
+  for (const f of files) fd.append('files', f);
+  fd.append('label', label);
+
+  const btn = whatsappForm.querySelector('button[type=submit]');
+  btn.disabled = true;
+  btn.textContent = 'Importing...';
+
+  try {
+    const res = await fetch('/import', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data.imported) {
+      whatsappResults.innerHTML = `<span class="badge badge-success">${data.imported} chat(s) imported</span>` +
+        `<ul style="margin-top:0.5rem;padding-left:1.2rem;color:var(--text);font-size:0.85rem">` +
+        data.files.map(f => `<li>${esc(f)}</li>`).join('') +
+        `</ul>`;
+      showToast(`${data.imported} chat(s) imported`);
+      fileInput.value = '';
+    } else {
+      whatsappResults.innerHTML = `<span class="badge badge-error">${data.error || 'Import failed'}</span>`;
+      showToast(data.error || 'Import failed', true);
+    }
+  } catch (err) {
+    whatsappResults.innerHTML = `<span class="badge badge-error">Network error</span>`;
+    showToast('Network error', true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload & Import';
+  }
+});
 </script>
 </body>
 </html>
