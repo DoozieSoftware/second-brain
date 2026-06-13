@@ -1,6 +1,7 @@
 import { ReasoningEngine } from '../core/reasoning.js';
 import { Memory, type MemoryDocument } from '../core/memory.js';
 import { UserModelManager } from '../core/user-model.js';
+import { extractJsonObject } from '../core/json-extract.js';
 
 export interface DecisionSignal {
   domain: string;
@@ -119,11 +120,10 @@ export class ExtractionEngine {
 
       if (result.content.includes('NO_SIGNAL')) return null;
 
-      // Parse JSON from response
-      const jsonMatch = result.content.match(/\{[\s\S]*?\}/);
-      if (!jsonMatch) return null;
-
-      const parsed = JSON.parse(jsonMatch[0]);
+      // Parse JSON from response. Use the shared extractor so we tolerate
+      // nested objects, code fences, and prose wrappers.
+      const parsed = extractJsonObject<Record<string, any>>(result.content);
+      if (!parsed || typeof parsed !== 'object') return null;
 
       return {
         domain: parsed.domain || 'other',

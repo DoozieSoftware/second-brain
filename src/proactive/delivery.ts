@@ -48,26 +48,50 @@ export function storeScanResults(report: SavingsReport): StoredAlert[] {
   const store = loadAlerts();
   const now = new Date().toISOString();
 
-  // Mark old alerts as potentially stale (keep for history)
-  const newAlerts: StoredAlert[] = report.alerts.map((alert, i) => ({
-    ...alert,
-    id: `alert_${Date.now()}_${i}`,
-    timestamp: now,
-    dismissed: false,
-  }));
+  // Step 1: dedup newly-scanned alerts against prior un-dismissed alerts by
+  // (type, sources[0], title). A scan that re-detects the same issue should
+  // refresh the existing alert's timestamp, not spawn a new one with a new id.
+  // Otherwise the operator loses the prior alert's acknowledged state.
+  const priorActive = store.alerts.filter((a) => !a.dismissed);
+  const dedupKey = (a: { type: string; sources?: string[]; title: string }) =>
+    `${a.type}|${a.sources?.[0] ?? ''}|${a.title}`;
 
-  // Merge: keep dismissed alerts from previous scan, add new ones
-  const dismissedIds = new Set(
-    store.alerts.filter((a) => a.dismissed).map((a) => a.id)
+  const priorByKey = new Map<string, StoredAlert>();
+  for (const a of priorActive) priorByKey.set(dedupKey(a), a);
+
+  const newAlerts: StoredAlert[] = report.alerts.map((alert, i) => {
+    const key = dedupKey(alert);
+    const prior = priorByKey.get(key);
+    if (prior) {
+      // Reuse the prior id and preserve acknowledged state; just bump the
+      // timestamp so the UI shows it as fresh.
+      return { ...alert, id: prior.id, timestamp: now, dismissed: false };
+    }
+    return {
+      ...alert,
+      id: `alert_${Date.now()}_${i}`,
+      timestamp: now,
+      dismissed: false,
+    };
+  });
+
+  // Mark keys that were re-detected this scan so we can drop prior duplicates.
+  const seenKeys = new Set(newAlerts.map((a) => dedupKey(a)));
+  const dedupedPriorActive = priorActive.filter(
+    (a) => !seenKeys.has(dedupKey(a))
   );
 
-  // Keep recent dismissed alerts (last 30 days)
+  // Keep recent dismissed alerts (last 30 days) so the operator can still see
+  // a history of what they've triaged.
   const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const oldDismissed = store.alerts.filter(
     (a) => a.dismissed && new Date(a.timestamp).getTime() > thirtyDaysAgo
   );
 
-  store.alerts = [...oldDismissed, ...newAlerts];
+  // Merge: re-detected alerts (re-stamped), prior un-dismissed alerts that
+  // this scan didn't re-emit (preserved so the operator doesn't lose context),
+  // recent dismissed alerts (history), then any brand-new alerts.
+  store.alerts = [...newAlerts, ...dedupedPriorActive, ...oldDismissed];
   store.lastScan = now;
 
   // Add to history

@@ -4,6 +4,7 @@ import { Memory } from './memory.js';
 import { ToolRegistry } from './tools.js';
 import { SearchEngine } from './search.js';
 import { CrossSourceLinker } from './linker.js';
+import { extractJsonObject } from './json-extract.js';
 
 export interface OperatorResponse {
   answer: string;
@@ -554,22 +555,9 @@ Output ONLY valid JSON:
       // Strip markdown code fences
       content = content.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
 
-      // Try direct JSON parse first
-      try {
-        const parsed = JSON.parse(content);
-        return {
-          score: parsed.overall_score || 0.5,
-          claims: parsed.claims || [],
-          issues: parsed.issues || [],
-          checked: true,
-        };
-      } catch {
-        // Not valid JSON directly, try regex extraction
-      }
-
-      const jsonMatch = content.match(/\{[\s\S]*\}/);
-      if (jsonMatch) {
-        const parsed = JSON.parse(jsonMatch[0]);
+      // Robust JSON extraction — tolerates nested objects, code fences, and prose.
+      const parsed = extractJsonObject<Record<string, any>>(content);
+      if (parsed && typeof parsed === 'object') {
         return {
           score: parsed.overall_score || 0.5,
           claims: parsed.claims || [],
@@ -629,18 +617,69 @@ Output ONLY valid JSON:
       let citStr = content.slice(citationsStart + 'CITATIONS:'.length).trim();
       // Strip markdown code fences if present
       citStr = citStr.replace(/^```(?:json)?\s*\n?/i, '').replace(/\n?```\s*$/i, '');
-      // Try to find JSON array
-      const jsonMatch = citStr.match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
+      // Try a JSON array first — that's the documented contract.
+      const arrayMatch = citStr.match(/\[[\s\S]*\]/);
+      if (arrayMatch) {
         try {
-          citations = JSON.parse(jsonMatch[0]);
+          citations = JSON.parse(arrayMatch[0]);
         } catch {
-          // JSON parse failed — return empty rather than garbage
+          // JSON parse failed — fall back to free-form extraction.
         }
+      }
+      // Fallback: model returned a free-form `CITATIONS:` block (common with
+      // free OpenRouter models that can't reliably emit JSON). Recover what we
+      // can so the dashboard's "Sources" footer still renders.
+      if (citations.length === 0) {
+        citations = this.extractCitationsFromText(citStr);
       }
     }
 
     return { answer, citations, confidence, steps: [], searchCount: 0, successfulSearches: 0 };
+  }
+
+  /**
+   * Recover citations from a free-form CITATIONS: block. The documented
+   * contract is a JSON array, but free OpenRouter models often emit prose
+   * like `CITATIONS: see the auth PR #42 in the second-brain repo` instead.
+   * Without this fallback, the dashboard's "Sources" footer renders empty
+   * even when the answer clearly references real sources.
+   */
+  private extractCitationsFromText(text: string): Citation[] {
+    const citations: Citation[] = [];
+    if (!text) return citations;
+
+    // Pattern 1: `from/in/via <source> (<excerpt>)` or `from/in/via <source>`
+    const fromRegex = /(?:from|in|via|see(?:\s+the)?)\s+([^\s,.;:()]+(?:\/[^\s,.;:()]+)?)\s*(?:\(([^)]+)\))?/gi;
+    let m: RegExpExecArray | null;
+    while ((m = fromRegex.exec(text)) !== null) {
+      const source = (m[1] || '').trim();
+      if (!source) continue;
+      const excerpt = (m[2] || m[0]).slice(0, 200).trim();
+      citations.push({ source, type: 'reference', excerpt });
+    }
+
+    // Pattern 2: numbered references like `[1] some description`
+    const numbered = /\[(\d+)\]\s*([^\n]+)/g;
+    while ((m = numbered.exec(text)) !== null) {
+      const source = `[${m[1]}]`;
+      const excerpt = (m[2] || '').slice(0, 200).trim();
+      if (!excerpt) continue;
+      citations.push({ source, type: 'reference', excerpt });
+    }
+
+    // Pattern 3: PR / issue references like `#42` or `PR #42` or `issue #7`
+    const prRegex = /\b(?:PR|issue|ISSUE)\s*#(\d+)\b/gi;
+    while ((m = prRegex.exec(text)) !== null) {
+      const source = `${m[0].toUpperCase().includes('ISSUE') ? 'issue' : 'pr'} #${m[1]}`;
+      const start = Math.max(0, m.index - 60);
+      const end = Math.min(text.length, m.index + m[0].length + 60);
+      const excerpt = text.slice(start, end).trim();
+      if (!citations.some((c) => c.source === source)) {
+        citations.push({ source, type: 'reference', excerpt });
+      }
+    }
+
+    return citations;
   }
 
 }

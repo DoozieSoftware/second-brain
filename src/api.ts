@@ -99,14 +99,15 @@ app.get('/alerts/all', (_req: Request, res: Response) => {
   res.json({ alerts });
 });
 
+// ─── Auth gates all routes below this line ───
+app.use(authMiddleware);
+
+// Acknowledge an alert
 app.post('/alerts/:id/acknowledge', (req: Request, res: Response) => {
   const alertId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const ok = alertManager.acknowledge(alertId);
   res.json({ success: ok });
 });
-
-// ─── Auth gates all routes below this line ───
-app.use(authMiddleware);
 
 // ─── Core API ───
 
@@ -228,7 +229,11 @@ app.post('/import/url', async (req: Request, res: Response) => {
 
     res.json({ imported: 1, documentId: doc.id, url });
   } catch (error) {
-    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+    // SSRF guard / DNS / timeout errors come through here. Surface a 4xx so the
+    // caller can tell the URL was rejected, and never expose internal details.
+    const message = error instanceof Error ? error.message : 'Internal error';
+    const isClientError = /Only https|Invalid URL|Direct IP|DNS|Refusing|too large|aborted/i.test(message);
+    res.status(isClientError ? 400 : 500).json({ error: message });
   }
 });
 

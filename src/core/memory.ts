@@ -142,6 +142,21 @@ export class Memory {
     return this.docs.slice(0, limit).map(({ embedding, ...doc }) => doc);
   }
 
+  /** Return the most-recently-ingested documents, newest first. */
+  async getRecent(limit = 100): Promise<MemoryDocument[]> {
+    if (!this.initialized) await this.init();
+    const end = this.docs.length;
+    const start = Math.max(0, end - limit);
+    return this.docs.slice(start, end).reverse().map(({ embedding, ...doc }) => doc);
+  }
+
+  /** Return a slice of the docs array. Used by callers that need to page
+   *  through the entire store without the default 1000-doc cap. */
+  async getAllRange(offset: number, limit: number): Promise<MemoryDocument[]> {
+    if (!this.initialized) await this.init();
+    return this.docs.slice(offset, offset + limit).map(({ embedding, ...doc }) => doc);
+  }
+
   async clear(): Promise<void> {
     this.docs = [];
     this.persist();

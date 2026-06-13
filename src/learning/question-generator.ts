@@ -1,6 +1,7 @@
 import { UserModelManager, type Gap } from '../core/user-model.js';
 import { SystemModelManager } from '../core/system-model.js';
 import { ReasoningEngine } from '../core/reasoning.js';
+import { extractJsonObject } from '../core/json-extract.js';
 
 export interface Question {
   id: string;
@@ -162,9 +163,17 @@ Respond with this exact JSON format:
         { temperature: 0.2, maxTokens: 500 }
       );
 
-      const jsonMatch = result.content.match(/\{[\s\S]*?\}/);
-      if (jsonMatch) {
-        return JSON.parse(jsonMatch[0]);
+      // Parse JSON from response. Use the shared extractor so we tolerate
+      // nested objects (the schema includes a nested `extractedWeights` map
+      // that the non-greedy regex would mangle).
+      const parsed = extractJsonObject<Record<string, any>>(result.content);
+      if (parsed) {
+        return {
+          extractedValues: parsed.extractedValues || [],
+          extractedWeights: parsed.extractedWeights || {},
+          confidence: parsed.confidence ?? 0.5,
+          reasoning: parsed.reasoning || '',
+        };
       }
     } catch (error) {
       console.warn('Answer analysis failed:', error);

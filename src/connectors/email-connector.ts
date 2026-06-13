@@ -109,7 +109,17 @@ export class EmailConnector {
             const parsed = await simpleParser(message.source as Buffer);
             const subject = parsed.subject || '(no subject)';
             const from = parsed.from?.text || 'unknown';
-            const to = typeof parsed.to === 'object' && !Array.isArray(parsed.to) ? (parsed.to as any).text || '' : '';
+            // mailparser returns `to` as an `AddressObject` for a single
+            // recipient or an array of `AddressObject` for distribution
+            // lists. The old guard silently dropped the array case, which
+            // meant every multi-recipient email lost its recipient list and
+            // the linker couldn't extract any person entities for those
+            // recipients.
+            const to = parsed.to
+              ? (Array.isArray(parsed.to)
+                  ? parsed.to.map((a: any) => a?.text ?? '').filter(Boolean).join(', ')
+                  : (parsed.to as any).text ?? '')
+              : '';
             const date = parsed.date?.toISOString() || 'unknown';
             const body = (parsed.text || '').slice(0, 3000);
 

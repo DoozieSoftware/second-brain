@@ -14,6 +14,7 @@ export interface AlertMetrics {
   avgResponseTime: number;
   avgConfidence: number;
   recentErrors: number;
+  recentQueries: number;
   totalQueries: number;
 }
 
@@ -74,8 +75,11 @@ class AlertManager {
     },
     {
       name: 'low_confidence',
-      description: 'Average confidence below 0.5',
-      condition: (m) => m.avgConfidence < 0.5,
+      description: 'Average confidence below 0.5 (with traffic)',
+      // Guard: only fire when there IS traffic. Without this guard, an idle
+      // server (recentQueries=0) reports avgConfidence=0, which trips the
+      // condition and spams an info alert every 15 minutes forever.
+      condition: (m) => m.recentQueries >= 5 && m.avgConfidence < 0.5,
       severity: 'info',
       cooldown: 900000,
     },
@@ -119,6 +123,7 @@ class AlertManager {
       avgResponseTime: health.avgResponseTime,
       avgConfidence: health.avgConfidence,
       recentErrors: health.recentErrors,
+      recentQueries: health.recentQueries,
       totalQueries: health.totalQueries,
     };
 

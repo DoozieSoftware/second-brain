@@ -1,5 +1,7 @@
 import { readFileSync } from 'fs';
 import { extname, basename } from 'path';
+import { lookup } from 'dns/promises';
+import { isIP } from 'net';
 import type { MemoryDocument } from '../core/memory.js';
 
 const IOS_TS = /^\[\d{1,2}\/\d{1,2}\/\d{2,4}, \d{1,2}:\d{2}(?::\d{2})\]/;
@@ -7,6 +9,74 @@ const ANDROID_TS = /^\d{1,2}\/\d{1,2}\/\d{2,4}, \d{1,2}:\d{2}/;
 const MSG_IOS = /^\[(\d{1,2}\/\d{1,2}\/\d{2,4}), (\d{1,2}:\d{2}(?::\d{2})\s*(?:am|pm)?)\]\s*([^:]+?):\s([\s\S]*?)$/i;
 const MSG_ANDROID = /^(\d{1,2}\/\d{1,2}\/\d{2,4}), (\d{1,2}:\d{2}\s*(?:am|pm)?)\s*-\s*([^:]+?):\s([\s\S]*?)$/i;
 const SYSTEM_PATTERNS = /(?:end-to-end encrypted|Messages and calls are|added|removed|changed the subject|created group|left|security code changed|deleted this message)/i;
+
+const MAX_IMPORT_BYTES = 50 * 1024 * 1024; // 50 MB cap on URL-fetched content
+const FETCH_TIMEOUT_MS = 10_000;
+
+/** Reject URLs that resolve to private/loopback/link-local/reserved IP ranges.
+ *  Protects against SSRF to cloud metadata (169.254.169.254), localhost services,
+ *  and internal RFC1918 networks. */
+async function assertSafeHttpsUrl(input: string): Promise<URL> {
+  let parsed: URL;
+  try {
+    parsed = new URL(input);
+  } catch {
+    throw new Error('Invalid URL');
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new Error('Only https URLs are allowed');
+  }
+  const hostname = parsed.hostname;
+  if (!hostname) throw new Error('URL has no hostname');
+
+  // Literal IPs are rejected up front — only DNS-resolved hostnames pass.
+  if (isIP(hostname)) {
+    throw new Error('Direct IP addresses are not allowed');
+  }
+
+  // Resolve all A/AAAA records and check each one.
+  let addresses: { address: string; family: number }[];
+  try {
+    addresses = await lookup(hostname, { all: true, verbatim: true });
+  } catch (err) {
+    throw new Error(`DNS resolution failed: ${err instanceof Error ? err.message : err}`);
+  }
+  if (addresses.length === 0) throw new Error('No DNS records found');
+
+  for (const { address } of addresses) {
+    if (isPrivateAddress(address)) {
+      throw new Error(`Refusing to fetch private/internal address: ${address}`);
+    }
+  }
+  return parsed;
+}
+
+function isPrivateAddress(ip: string): boolean {
+  const family = isIP(ip);
+  if (family === 4) {
+    const parts = ip.split('.').map(Number);
+    if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n) || n < 0 || n > 255)) return true;
+    const [a, b] = parts as [number, number, number, number];
+    if (a === 10) return true;                        // 10.0.0.0/8
+    if (a === 127) return true;                       // 127.0.0.0/8 loopback
+    if (a === 0) return true;                         // 0.0.0.0/8
+    if (a === 169 && b === 254) return true;          // 169.254.0.0/16 link-local (cloud metadata!)
+    if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+    if (a === 192 && b === 168) return true;          // 192.168.0.0/16
+    if (a === 100 && b >= 64 && b <= 127) return true;// 100.64.0.0/10 CGNAT
+    if (a >= 224) return true;                        // multicast + reserved
+    return false;
+  }
+  if (family === 6) {
+    const lower = ip.toLowerCase().split('%')[0]!;
+    if (lower === '::1' || lower === '::') return true;            // loopback / unspecified
+    if (lower.startsWith('fe80:') || lower.startsWith('fe8') || lower.startsWith('fe9') || lower.startsWith('fea') || lower.startsWith('feb')) return true; // link-local
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // unique local
+    if (lower.startsWith('ff')) return true;                       // multicast
+    return false;
+  }
+  return true; // unknown family → treat as private
+}
 
 export interface FileImport {
   path: string;
@@ -238,11 +308,28 @@ export class FileImportConnector {
   }
 
   async parseUrl(url: string, label?: string): Promise<MemoryDocument | null> {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${url}`);
+    // SSRF guard: enforce https, reject literal IPs, resolve hostname, and refuse
+    // any address in private/loopback/link-local/CGNAT ranges.
+    const safeUrl = await assertSafeHttpsUrl(url);
+
+    const response = await fetch(safeUrl.toString(), {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+      redirect: 'follow',
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status} fetching ${safeUrl}`);
+
+    // Cap body size — refuse anything larger than MAX_IMPORT_BYTES.
+    const contentLength = Number(response.headers.get('content-length') ?? 0);
+    if (contentLength > MAX_IMPORT_BYTES) {
+      throw new Error(`Response too large: ${contentLength} bytes (cap ${MAX_IMPORT_BYTES})`);
+    }
+    const arrayBuffer = await response.arrayBuffer();
+    if (arrayBuffer.byteLength > MAX_IMPORT_BYTES) {
+      throw new Error(`Response too large: ${arrayBuffer.byteLength} bytes (cap ${MAX_IMPORT_BYTES})`);
+    }
 
     const contentType = response.headers.get('content-type') || '';
-    const buffer = Buffer.from(await response.arrayBuffer());
+    const buffer = Buffer.from(arrayBuffer);
 
     let text = '';
     if (contentType.includes('text/html')) {
@@ -255,15 +342,15 @@ export class FileImportConnector {
 
     if (!text || text.trim().length === 0) return null;
 
-    const title = url.split('/').pop() || url;
+    const title = safeUrl.pathname.split('/').filter(Boolean).pop() || safeUrl.hostname;
     return {
-      id: `import:url:${url}:${Date.now()}`,
-      text: `${title}\nSource: ${url}\n\n${text.slice(0, 50000)}`,
+      id: `import:url:${safeUrl.toString()}:${Date.now()}`,
+      text: `${title}\nSource: ${safeUrl.toString()}\n\n${text.slice(0, 50000)}`,
       metadata: {
         source: 'import',
         type: 'url',
         label: label || 'url-import',
-        url,
+        url: safeUrl.toString(),
         date: new Date().toISOString(),
       },
     };

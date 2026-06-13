@@ -121,6 +121,7 @@ export class UserModelManager {
     dim.samples += 1;
     // Confidence increases with more consistent samples
     dim.confidence = Math.min(1.0, dim.confidence + 0.1);
+    this.save();
   }
 
   setValues(values: string[]): void {
@@ -137,10 +138,13 @@ export class UserModelManager {
       };
     }
     const d = this.model.decision_domains[domain];
+    let changed = false;
     if (!d.examples.includes(docId)) {
       d.examples.push(docId);
       d.confidence = Math.min(1.0, d.confidence + 0.05);
+      changed = true;
     }
+    if (changed) this.save();
   }
 
   updateDomainWeights(domain: string, weights: Record<string, number>): void {
@@ -162,6 +166,7 @@ export class UserModelManager {
       }
     }
     d.confidence = Math.min(1.0, d.confidence + 0.15);
+    this.save();
   }
 
   getGapsByPriority(): Gap[] {
@@ -179,9 +184,11 @@ export class UserModelManager {
       if (gap.confidence >= 0.8) {
         this.model.gaps = this.model.gaps.filter(g => g.domain !== domain);
       }
+      this.save();
     } else if (newConfidence < 0.8) {
       // Add new gap if domain has low confidence
       this.model.gaps.push({ domain, confidence: newConfidence, priority: 'medium' });
+      this.save();
     }
   }
 

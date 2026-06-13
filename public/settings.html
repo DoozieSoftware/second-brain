@@ -319,7 +319,7 @@ function renderAccounts(accounts) {
   `).join('');
 }
 
-function esc(s) { return String(s || '').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function esc(s) { return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
 
 form.addEventListener('submit', async (e) => {
   e.preventDefault();

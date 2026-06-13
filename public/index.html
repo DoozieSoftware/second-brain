@@ -83,6 +83,7 @@
 <div class="app">
   <header>
     <h1><span>🧠</span> Second Brain</h1>
+    <a href="/settings" style="margin-left:auto;color:var(--text-muted);text-decoration:none;font-size:13px;padding:6px 12px;border:1px solid var(--border);border-radius:6px">Settings</a>
   </header>
 
   <aside>
@@ -235,7 +236,7 @@ async function askQuestion() {
     document.getElementById(thinkingId)?.remove();
 
     // Add answer
-    let html = `<div class="message assistant"><div class="bubble">${escapeHtml(result.answer)}</div>`;
+    let html = `<div class="message assistant"><div class="bubble">${escapeHtml(result.answer).replace(/\n/g, '<br>')}</div>`;
     if (result.citations?.length > 0) {
       html += `<div class="citations">📚 Sources:<br>`;
       html += result.citations.map(c =>

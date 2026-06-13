@@ -50,7 +50,16 @@ export class SavingsScanner {
   async scanStructured(): Promise<SavingsReport | string> {
     console.log('\n[Proactive Scan] Analyzing organizational memory...\n');
 
-    const allDocs = await this.memory.getAll();
+    // Page through the entire memory store. The default getAll(1000) cap would
+    // miss issues/PRs in any org with more than 1000 docs; we need every doc
+    // for cross-source duplicate detection.
+    const totalCount = this.memory.count;
+    const pageSize = 1000;
+    const allDocs: MemoryDocument[] = [];
+    for (let offset = 0; offset < totalCount; offset += pageSize) {
+      const page = await this.memory.getAllRange(offset, pageSize);
+      allDocs.push(...page);
+    }
     if (allDocs.length === 0) {
       return 'No data in memory. Run `sync` first to ingest data from your sources.';
     }

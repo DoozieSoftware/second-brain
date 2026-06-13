@@ -74,7 +74,7 @@ export class SupervisorOperator {
   async ask(question: string, verbose = false): Promise<OperatorResponse> {
     const mainOperator = new Operator('supervisor', this.reasoning, this.memory, undefined, this.searchEngine);
 
-    let context = `You have access to organizational memory from multiple sources: GitHub (repos, PRs, issues), documents, emails, and calendar events. Search across all of them to answer the question comprehensively. Connect related information across sources.`;
+    let context = `You have access to organizational memory from multiple sources: GitHub (repos, PRs, issues), documents, emails, calendar events, Google Drive files, Dropbox documents, and imported chats (WhatsApp). Search across all of them to answer the question comprehensively. Connect related information across sources.`;
 
     if (this.conversationHistory.length > 0) {
       const recentHistory = this.conversationHistory.slice(-6);
@@ -141,10 +141,14 @@ export class SupervisorOperator {
         const count = await (op as any).sync();
         results.push({ source: sourceName, count });
 
-        // Get documents that were just synced for extraction
+        // Get documents that were just synced for extraction.
+        // getAll(limit) returns the head of the docs array (oldest), so a
+        // sync that ingests 50 new docs at the tail would otherwise pick up
+        // 50 unrelated old docs. Use getRecent() to grab the just-synced
+        // docs at the tail.
         if (count > 0) {
-          const docs = await this.memory.getAll(count);
-          const newDocs = docs.filter(d => (d.metadata.source as string) === sourceName);
+          const recent = await this.memory.getRecent(count);
+          const newDocs = recent.filter(d => (d.metadata.source as string) === sourceName);
           allNewDocs.push(...newDocs);
         }
       } catch (error) {
