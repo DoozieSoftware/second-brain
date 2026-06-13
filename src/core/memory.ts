@@ -39,8 +39,8 @@ export class Memory {
   private dataPath: string;
   private initialized = false;
 
-  constructor() {
-    this.dataPath = join(DATA_DIR, MEMORY_FILE);
+  constructor(dataDir?: string) {
+    this.dataPath = join(dataDir ?? DATA_DIR, MEMORY_FILE);
   }
 
   async init(): Promise<void> {
