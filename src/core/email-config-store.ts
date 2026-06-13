@@ -2,7 +2,7 @@ import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 import type { EmailAccount } from '../connectors/email-connector.js';
 
-const DATA_DIR = './data';
+const DATA_DIR = process.env.DATA_DIR ?? './data';
 const CONFIG_FILE = 'email-config.json';
 
 interface EmailStore {

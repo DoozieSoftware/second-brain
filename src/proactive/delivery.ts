@@ -2,7 +2,12 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 import type { SavingsAlert, SavingsReport } from './savings-scanner.js';
 
-const DATA_DIR = './data';
+// Resolved at call time so tests can change DATA_DIR between calls. Using a
+// top-level `const` froze the value at module load and broke tests that set
+// `process.env.DATA_DIR` after import.
+function getDataDir(): string {
+  return process.env.DATA_DIR ?? './data';
+}
 const ALERTS_FILE = 'alerts.json';
 const DIGEST_FILE = 'digest.md';
 
@@ -19,13 +24,15 @@ export interface AlertStore {
 }
 
 function getStorePath(): string {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  return join(DATA_DIR, ALERTS_FILE);
+  const dir = getDataDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return join(dir, ALERTS_FILE);
 }
 
 function getDigestPath(): string {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-  return join(DATA_DIR, DIGEST_FILE);
+  const dir = getDataDir();
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  return join(dir, DIGEST_FILE);
 }
 
 export function loadAlerts(): AlertStore {

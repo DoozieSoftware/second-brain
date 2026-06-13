@@ -15,7 +15,7 @@ export interface SearchResult {
   score: number;
 }
 
-const DATA_DIR = './data';
+const DATA_DIR = process.env.DATA_DIR ?? './data';
 const MEMORY_FILE = 'memory.json';
 
 interface StoredDoc extends MemoryDocument {

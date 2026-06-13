@@ -1,12 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { readFileSync, existsSync, rmSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
+
+const DATA_DIR = mkdtempSync(join(tmpdir(), 'am-persist-'));
+process.env.DATA_DIR = DATA_DIR;
+
 import { storeScanResults, loadAlerts, saveAlerts } from '../proactive/delivery.js';
 import type { SavingsReport } from '../proactive/savings-scanner.js';
-
-const DATA_DIR = './data';
-const ALERTS = join(DATA_DIR, 'alerts.json');
-const BACKUP = join(DATA_DIR, 'alerts.test-backup.json');
 
 function makeReport(alerts: SavingsReport['alerts']): SavingsReport {
   return {
@@ -20,20 +21,8 @@ function makeReport(alerts: SavingsReport['alerts']): SavingsReport {
 }
 
 describe('storeScanResults — alert merge', () => {
-  beforeAll(() => {
-    mkdirSync(DATA_DIR, { recursive: true });
-    if (existsSync(ALERTS) && !existsSync(BACKUP)) {
-      writeFileSync(BACKUP, readFileSync(ALERTS));
-    }
-  });
-
   afterAll(() => {
-    if (existsSync(BACKUP)) {
-      writeFileSync(ALERTS, readFileSync(BACKUP));
-      rmSync(BACKUP, { force: true });
-    } else {
-      rmSync(ALERTS, { force: true });
-    }
+    rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
   it('deduplicates re-detected alerts across scans (preserves id)', () => {

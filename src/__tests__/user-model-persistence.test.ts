@@ -1,46 +1,39 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { readFileSync, existsSync, rmSync, writeFileSync, mkdirSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
 import { join } from 'path';
+
+// Use a stable per-file tempdir so multiple files in the same vitest run
+// don't share state. The user-model.test.ts uses a different prefix.
+const DATA_DIR = mkdtempSync(join(tmpdir(), 'um-persist-'));
+process.env.DATA_DIR = DATA_DIR;
+
 import { UserModelManager } from '../core/user-model.js';
 
-const DATA_DIR = './data';
-const FILE = join(DATA_DIR, 'user-model.json');
-const BACKUP = join(DATA_DIR, 'user-model.test-backup.json');
-
 describe('UserModelManager persistence', () => {
-  beforeAll(() => {
-    mkdirSync(DATA_DIR, { recursive: true });
-    if (existsSync(FILE) && !existsSync(BACKUP)) {
-      readFileSync(FILE);
-      writeFileSync(BACKUP, readFileSync(FILE));
-    }
-  });
-
   afterAll(() => {
-    if (existsSync(BACKUP)) {
-      writeFileSync(FILE, readFileSync(BACKUP));
-      rmSync(BACKUP, { force: true });
-    }
+    rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
   it('persists updateDimension across restarts', () => {
     const a = new UserModelManager();
     const dimName = 'risk_tolerance' as const;
-    const before = a.getModel().dimensions[dimName]!.value;
-    a.updateDimension('dimensions', dimName, before + 0.1, 'test');
-    expect(existsSync(FILE)).toBe(true);
-
+    // The default dimension starts at value=0.5 with samples=0. A single
+    // update applies a Bayesian update with weight 1/(1+0) = 1, so the value
+    // is overwritten to the new value. We assert the persisted value equals
+    // what we set, not "old + delta" — that's the actual contract.
+    a.updateDimension('dimensions', dimName, 0.9, 'test');
     const b = new UserModelManager();
-    expect(b.getModel().dimensions[dimName]!.value).toBeCloseTo(before + 0.1, 5);
+    expect(b.getModel().dimensions[dimName]!.value).toBeCloseTo(0.9, 5);
+    expect(b.getModel().dimensions[dimName]!.samples).toBe(1);
   });
 
   it('persists updateGap across restarts', () => {
     const a = new UserModelManager();
-    a.updateGap('test-domain-' + Date.now(), 0.5);
+    const domain = 'test-domain-' + Date.now();
+    a.updateGap(domain, 0.5);
     const b = new UserModelManager();
-    // Find the gap we just added (other tests may add gaps too)
-    const gap = b.getModel().gaps.find((g) => g.domain.startsWith('test-domain-'));
-    expect(gap).toBeDefined();
+    expect(b.getModel().gaps.find((g) => g.domain === domain)?.confidence).toBe(0.5);
   });
 
   it('persists addDomainExample across restarts', () => {

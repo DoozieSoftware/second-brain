@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
 
-const DATA_DIR = './data';
+const DATA_DIR = process.env.DATA_DIR ?? './data';
 const CONFIG_FILE = 'connector-config.json';
 
 export interface GDriveSettings {

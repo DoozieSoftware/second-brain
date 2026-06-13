@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs';
 import { join } from 'path';
 
-const DATA_DIR = './data';
+const DATA_DIR = process.env.DATA_DIR ?? './data';
 const SYSTEM_MODEL_FILE = 'system-model.json';
 
 export interface DomainPerformance {
