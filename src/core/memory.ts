@@ -279,6 +279,19 @@ export class Memory {
     return rest;
   }
 
+  /** Merge a metadata patch into a doc without re-embedding. Used by the
+   *  dream engine to mark duplicates cheaply. Returns null if not found. */
+  async updateMetadata(id: string, patch: Record<string, string | number | boolean>): Promise<MemoryDocument | null> {
+    if (!this.initialized) await this.init();
+    const idx = this.docs.findIndex((d) => d.id === id);
+    if (idx < 0) return null;
+    this.docs[idx].metadata = { ...this.docs[idx].metadata, ...patch };
+    this.invalidateTextIndex();
+    this.persist();
+    const { embedding, ...rest } = this.docs[idx];
+    return rest;
+  }
+
   // ─── Tagging ───
 
   /** Add tags to a document. Missing documents are ignored (returns null). */

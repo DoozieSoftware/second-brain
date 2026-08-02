@@ -321,6 +321,34 @@ program
     console.log('\n' + '━'.repeat(60));
   });
 
+// ========== Dreaming Command ==========
+
+program
+  .command('dream')
+  .description('Run one offline consolidation cycle (dedup, association mining, gap detection)')
+  .action(async () => {
+    const supervisor = new SupervisorOperator();
+
+    console.log('\n💤 Dreaming...\n');
+    const report = await supervisor.dream();
+
+    console.log('━'.repeat(60));
+    console.log(`\n📋 Dream report (${(report.durationMs / 1000).toFixed(1)}s, ${report.docsScanned} docs scanned)\n`);
+    console.log(`  Dedup: ${report.deduplicated.total} duplicate(s) marked`);
+    for (const ex of report.deduplicated.examples) {
+      console.log(`    • ${ex.duplicateId} → duplicate of ${ex.keepId} (${(ex.similarity * 100).toFixed(0)}% similar)`);
+    }
+    console.log(`  Associations: ${report.associations.newLinks} new cross-source link(s) (${report.associations.totalLinks} total)`);
+    for (const s of report.associations.sample) {
+      console.log(`    • "${s.entity}" — ${s.sources.join(', ')} (${s.docCount} docs)`);
+    }
+    console.log(`  Gaps: ${report.gaps.length}`);
+    for (const g of report.gaps) {
+      console.log(`    • ${g.domain} (confidence ${(g.avgConfidence * 100).toFixed(0)}%) — ${g.suggestion}`);
+    }
+    console.log('\n' + '━'.repeat(60));
+  });
+
 // ========== Knowledge Commands ==========
 
 program

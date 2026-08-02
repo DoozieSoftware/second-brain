@@ -15,11 +15,19 @@ import { connectorRegistry } from './integrations/index.js';
 import { FileImportConnector } from './connectors/file-import-connector.js';
 import { EmailConfigStore } from './core/email-config-store.js';
 import { ConnectorConfigStore } from './core/connector-config-store.js';
+import { DreamScheduler } from './dreaming/dream-scheduler.js';
 
 const app = express();
 app.use(express.json());
 
 const supervisor = new SupervisorOperator();
+
+// Idle-triggered offline consolidation ("dreaming").
+const dreamScheduler = new DreamScheduler(() => supervisor.dream());
+app.use((_req: Request, _res: Response, next) => {
+  dreamScheduler.touch();
+  next();
+});
 
 if (process.env.NODE_ENV === 'production') {
   alertManager.configure({
@@ -1004,6 +1012,17 @@ app.get('/analytics/diff', (_req: Request, res: Response) => {
   }
 });
 
+// ─── Dreaming API (offline memory consolidation) ───
+
+app.post('/dream', requireAccess('write', 'knowledge'), async (_req: Request, res: Response) => {
+  try {
+    const report = await supervisor.dream();
+    res.json({ report });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
 // ─── Knowledge API (tagging & versioning) ───
 
 app.get('/knowledge/search', async (req: Request, res: Response) => {
@@ -1130,10 +1149,12 @@ const server = app.listen(PORT, () => {
   console.log('Health:    http://localhost:' + PORT + '/health');
   console.log('Metrics:   http://localhost:' + PORT + '/metrics');
   console.log('Alerts:    http://localhost:' + PORT + '/alerts/active');
+  dreamScheduler.start();
 });
 
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
+  dreamScheduler.stop();
   alertManager.stop();
   server.close(() => {
     logger.info('Server closed');
@@ -1143,6 +1164,7 @@ process.on('SIGTERM', () => {
 
 process.on('SIGINT', () => {
   logger.info('SIGINT received, shutting down gracefully');
+  dreamScheduler.stop();
   alertManager.stop();
   server.close(() => {
     logger.info('Server closed');

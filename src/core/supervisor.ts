@@ -39,11 +39,14 @@ import { connectorRegistry, registerAllConnectors } from '../integrations/index.
 import { AnalyticsEngine } from '../analytics/analytics-engine.js';
 import type { AnalyticsSnapshot } from '../analytics/analytics-engine.js';
 import { metricsCollector } from './metrics.js';
+import { DreamEngine, type DreamReport } from '../dreaming/dream-engine.js';
+import { CrossSourceLinker } from './linker.js';
 
 export class SupervisorOperator {
   private reasoning: ReasoningEngine;
   private memory: Memory;
   private searchEngine: SearchEngine;
+  private linker: CrossSourceLinker;
   private operators: Map<string, Operator> = new Map();
   private savingsScanner: SavingsScanner;
   private conversationHistory: { role: 'user' | 'assistant'; content: string }[] = [];
@@ -60,11 +63,13 @@ export class SupervisorOperator {
   private strategy: StrategyEngine;
   private decisions: DecisionEngine;
   private analytics: AnalyticsEngine;
+  private dreamEngine: DreamEngine;
 
   constructor() {
     this.reasoning = new ReasoningEngine();
     this.memory = new Memory();
     this.searchEngine = new SearchEngine(this.memory);
+    this.linker = new CrossSourceLinker(this.searchEngine);
     this.savingsScanner = new SavingsScanner(this.reasoning, this.memory);
 
     // Initialize learning components
@@ -79,6 +84,7 @@ export class SupervisorOperator {
     this.strategy = new StrategyEngine();
     this.decisions = new DecisionEngine(this.searchEngine);
     this.analytics = new AnalyticsEngine();
+    this.dreamEngine = new DreamEngine(this.memory, this.searchEngine, this.linker);
 
     // Integration framework — registers GitLab/Jira/Linear/Slack/Discord/
     // Notion/Confluence/CRM/Workspace/Internal adapters.
@@ -339,6 +345,19 @@ You also have access to the CTO Command Center: strategic goals/initiatives/road
 
   getAnalyticsDiff() {
     return this.analytics.diffLatest();
+  }
+
+  // ========== Dreaming (offline memory consolidation) ==========
+
+  /** Run one consolidation cycle. Pass query metrics so gap detection has
+   *  signal from real usage. */
+  async dream(): Promise<DreamReport> {
+    const report = await this.dreamEngine.dream({
+      queries: metricsCollector.getQueries(),
+    });
+    metricsCollector.recordDream();
+    console.log(`💤 Dream complete: deduped ${report.deduplicated.total}, mined ${report.associations.newLinks} new links, found ${report.gaps.length} gaps.`);
+    return report;
   }
 
   // ========== Knowledge Methods (tagging & versioning) ==========

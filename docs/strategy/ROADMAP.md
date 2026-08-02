@@ -96,6 +96,23 @@ The pitch to the eng-ops-aware Series A CTO: *"You're running Claude Code, Curso
 
 ---
 
+### v1.3 — The Dreaming Brain: offline memory consolidation (4-6 weeks, Q1 2027)
+
+**Theme:** Stop answering. Start *remembering better*. While nobody's asking questions, the brain replays the day's memory — dedup, mine associations, find gaps — so every future retrieval is sharper. The visible proof the system adapts on its own.
+
+| # | Feature | Value | Moat | Cost |
+|---|---|---|---|---|
+| 1 | **Dream loop** — `second-brain dream` CLI + `POST /dream` + idle-triggered scheduler (`DREAM_ENABLED`, `DREAM_IDLE_MINUTES`, `DREAM_COOLDOWN_MINUTES`). Runs when no `/ask` in N min. | 5 | 3 | S |
+| 2 | **Semantic dedup pass** — hybrid-search candidate discovery + Jaccard overlap; newer doc marked `duplicate_of` (cheap metadata patch, no re-embed). | 6 | 4 | S |
+| 3 | **Cross-source association mining** — entity co-occurrence (person/PR/issue/URL) persisted to `data/associations.json`; only links spanning ≥2 sources survive. Pre-warms the graph for the v1.2 Cross-Source Reasoner. | 8 | 7 | M |
+| 4 | **Gap detection** — low-confidence domains from query metrics → "what the brain doesn't know" suggestions. | 7 | 5 | S |
+| 5 | **Dream report** — per-dream summary (dedup/links/gaps), surfaced in CLI and `/analytics` trend. | 6 | 4 | S |
+| 6 | **Dream metric** — `total.dreams` in `/metrics`; dreaming counts toward analytics snapshots. | 4 | 3 | S |
+
+**Exit criteria:** `dream` runs unattended and produces a report; a second run dedups nothing new; `/analytics/diff` shows fewer duplicates and rising confidence after a sync→dream cycle. **Status: v1.3 scope confirmed — Must-haves shipped (v1.3a), Should/Could/Won't in `docs/strategy/DREAMING-MOSCOW.md`.**
+
+---
+
 ## What we are NOT building (and why)
 
 | Cut | Why | When to revisit |

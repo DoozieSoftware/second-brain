@@ -61,6 +61,7 @@ export class MetricsCollector {
   private queryCounter: number = 0;
   private syncCounter: number = 0;
   private scanCounter: number = 0;
+  private dreamCounter: number = 0;
   private activeConnections: number = 0;
 
   recordQuery(metric: Omit<QueryMetric, 'id' | 'timestamp'>): void {
@@ -94,6 +95,10 @@ export class MetricsCollector {
 
   recordScan(): void {
     this.scanCounter++;
+  }
+
+  recordDream(): void {
+    this.dreamCounter++;
   }
 
   incrementConnections(): void {
@@ -173,6 +178,7 @@ export class MetricsCollector {
         queries: this.queryCounter,
         syncs: this.syncCounter,
         scans: this.scanCounter,
+        dreams: this.dreamCounter,
         errors: this.store.errors.length,
       },
       hourly: {
@@ -274,6 +280,7 @@ export interface MetricsSummary {
     queries: number;
     syncs: number;
     scans: number;
+    dreams: number;
     errors: number;
   };
   hourly: {

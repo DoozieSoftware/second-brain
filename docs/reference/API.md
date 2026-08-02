@@ -472,6 +472,25 @@ All persisted snapshots, newest first.
 
 Delta between the two most recent snapshots.
 
+### `POST /dream`
+
+Run one offline consolidation cycle: semantic dedup, cross-source association mining, and gap detection. **Requires `write:knowledge`**.
+
+```json
+{
+  "report": {
+    "id": "dream_...",
+    "durationMs": 1135,
+    "docsScanned": 42,
+    "deduplicated": { "total": 2, "examples": [{ "keepId": "github:org/repo#1", "duplicateId": "github:org/repo#2", "similarity": 1 }] },
+    "associations": { "totalLinks": 5, "newLinks": 1, "sample": [{ "entity": "sarah@example.com", "sources": ["github", "calendar"], "docCount": 3 }] },
+    "gaps": [{ "domain": "legacy", "queryCount": 2, "avgConfidence": 0.25, "suggestion": "..." }]
+  }
+}
+```
+
+The server also runs this automatically after `DREAM_IDLE_MINUTES` (default 30) of no requests, at most once per `DREAM_COOLDOWN_MINUTES` (default 120). Disable with `DREAM_ENABLED=false`.
+
 ---
 
 ## CTO Command Center — Integrations

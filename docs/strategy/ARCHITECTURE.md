@@ -92,6 +92,10 @@ src/
 │   ├── identity-store.ts    # Users, per-user API keys (SHA-256), teams
 │   └── access-control.ts    # Principal, roles, permission matrix
 │
+├── dreaming/                # Offline memory consolidation ("dreaming")
+│   ├── dream-engine.ts      # Dedup + association mining + gap detection
+│   └── dream-scheduler.ts   # Idle-triggered dream runner (in API server)
+│
 ├── proactive/               # Push (no question required)
 │   ├── savings-scanner.ts   # Duplicate work, stalled PRs, meeting waste
 │   └── delivery.ts          # Alert storage, Slack + email formatting
@@ -248,6 +252,7 @@ data/
 ├── decisions.json       # Decision engine: ADR records + options
 ├── identity-users.json  # Identity store: users, key hashes, teams
 ├── analytics-snapshots.json  # Analytics engine: insight/trend snapshots
+├── associations.json   # Dream engine: cross-source entity links
 ├── email-config.json    # Per-mailbox IMAP config (sensitive — gitignore)
 ├── connector-config.json # Per-connector config (sensitive — gitignore)
 └── demo/                # (planned v1.0.1) Acme Co. demo corpus
@@ -318,6 +323,7 @@ See `docs/reference/API.md` for the full list. Key endpoints:
 - `GET /strategy/overview`, `/strategy/goals`, `/strategy/roadmaps` — strategy engine
 - `GET|POST /decisions`, `GET /decisions/:id`, `GET /decisions/:id/impact` — decision engine
 - `GET /analytics`, `/analytics/history`, `/analytics/diff` — analytics engine
+- `POST /dream` — run one offline consolidation cycle (dedup, associations, gaps)
 - `GET /integrations`, `POST /integrations/:name/test` — integration framework
 - `GET|POST /admin/users`, `/admin/teams`, `GET /me` — identity & RBAC
 
@@ -357,6 +363,27 @@ Two paths exist:
 7. **Tests** at `src/__tests__/your-connector.test.ts` — use `mkdtempSync` + `process.env.DATA_DIR` for isolation
 
 A shallow connector (list endpoints only) takes ~1 day. A deep connector with webhooks, incremental sync, entity resolution, and bi-directional writes takes ~6 weeks.
+
+---
+
+### Dreaming — offline memory consolidation (`src/dreaming/`)
+
+The dream loop runs while the system is idle (or on demand) and makes memory sharper without a question being asked:
+
+```
+DreamEngine.dream()
+  ├─ 1. Dedup: for each doc, hybrid-search candidates; if a same-source
+  │        earlier doc overlaps ≥ threshold (Jaccard), mark the newer doc
+  │        `duplicate_of` via a cheap metadata patch (no re-embed).
+  ├─ 2. Associations: extract entities (people, PR/issue numbers, URLs) and
+  │        persist links that span ≥2 sources to data/associations.json.
+  │        This pre-warms the graph the Cross-Source Reasoner queries.
+  ├─ 3. Gaps: low-confidence domains from query metrics → suggestions.
+  └─ 4. Report: dedup count + examples, new links, gaps — surfaced via CLI,
+         POST /dream, and the dreams counter in /metrics.
+```
+
+The engine is deterministic (no LLM dependency), so it's testable offline. The `DreamScheduler` triggers it from the API server after `DREAM_IDLE_MINUTES` of no requests, honoring a `DREAM_COOLDOWN_MINUTES` gap. Scope decisions live in `docs/strategy/DREAMING-MOSCOW.md`; the roadmap slots it as v1.3.
 
 ---
 

@@ -164,7 +164,7 @@ describe('AnalyticsEngine', () => {
       metrics: {
         summary: {
           uptime: 1,
-          total: { queries: 42, syncs: 3, scans: 1, errors: 5 },
+          total: { queries: 42, syncs: 3, scans: 1, dreams: 1, errors: 5 },
           hourly: { queries: 10, errors: 1, avgResponseTime: 500, avgConfidence: 0.7 },
           daily: { queries: 42, errors: 5, avgResponseTime: 600, avgConfidence: 0.7 },
           domains: { engineering: 42 },

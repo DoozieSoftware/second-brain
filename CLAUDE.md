@@ -64,6 +64,9 @@ npx tsx src/cli.ts user:create         # create user (prints API key once)
 # Proactive savings scan
 npx tsx src/cli.ts scan
 
+# Offline memory consolidation ("dreaming")
+npx tsx src/cli.ts dream              # dedup + association mining + gap detection
+
 # Check configured sources and memory stats
 npx tsx src/cli.ts status
 
@@ -106,6 +109,9 @@ src/
 ├── decisions/               # Decision engine (ADRs, impact analysis)
 ├── analytics/               # Analytics engine (insights + trends)
 ├── identity/                # Identity & RBAC (users, keys, teams)
+├── dreaming/                # Offline memory consolidation
+│   ├── dream-engine.ts      # Dedup + association mining + gap detection
+│   └── dream-scheduler.ts   # Idle-triggered dream runner (in API server)
 ├── middleware/
 │   └── auth.ts              # RBAC + legacy Bearer token auth
 ├── proactive/
