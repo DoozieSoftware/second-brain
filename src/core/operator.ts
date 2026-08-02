@@ -373,7 +373,7 @@ Think about what you need to find, then search. You may need to search multiple 
         const topK = Math.min((args.top_k as number) || 5, 15);
         const source = args.source as string | undefined;
         const type = args.type as string | undefined;
-        const results = await this.searchEngine.search(query, { topK, source, type });
+        const results = await this.searchEngine.search(query, { topK, source, type, mode: 'hybrid' });
         this.searchCount++;
 
         if (results.length === 0) {
@@ -414,7 +414,7 @@ Think about what you need to find, then search. You may need to search multiple 
         if (args.exclude) {
           query += ` NOT ${args.exclude}`;
         }
-        const results = await this.searchEngine.search(query, { topK: 5 });
+        const results = await this.searchEngine.search(query, { topK: 5, mode: 'hybrid' });
         if (results.length === 0) return `No related results found for "${args.topic}".`;
         return results
           .map((r, i) => `[${i + 1}] ${r.metadata.source || 'unknown'}: ${r.text.slice(0, 600)}`)

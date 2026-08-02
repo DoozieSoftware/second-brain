@@ -11,8 +11,11 @@
  *   0 9 * * * cd /path/to/second-brain && npx tsx src/scan-runner.ts --sync --slack $SLACK_WEBHOOK
  */
 
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import { SupervisorOperator } from './core/supervisor.js';
+
+// Load .env with override:true so a stale shell-exported key can't shadow the .env one.
+dotenv.config({ override: true });
 
 async function main() {
   const args = process.argv.slice(2);

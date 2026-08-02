@@ -1,12 +1,16 @@
 import type { Memory } from './memory.js';
 import type { SearchResult } from './memory.js';
 
+export type SearchMode = 'vector' | 'text' | 'hybrid';
+
 export interface SearchOptions {
   topK?: number;
   minScore?: number;
   source?: string;
   type?: string;
   dateAfter?: string;
+  /** Search mode. Defaults to 'vector' for backward compatibility. */
+  mode?: SearchMode;
 }
 
 export class SearchEngine {
@@ -22,8 +26,16 @@ export class SearchEngine {
     const topK = options?.topK ?? 10;
     const minScore = options?.minScore ?? this.defaultMinScore;
 
-    // Delegate to memory for vector search
-    const rawResults = await this.memory.search(query, topK);
+    // Delegate to memory — vector, full-text, or hybrid depending on mode.
+    let rawResults: SearchResult[];
+    const mode = options?.mode ?? 'vector';
+    if (mode === 'text') {
+      rawResults = await this.memory.searchText(query, topK);
+    } else if (mode === 'hybrid') {
+      rawResults = await this.memory.searchHybrid(query, topK);
+    } else {
+      rawResults = await this.memory.search(query, topK);
+    }
 
     // Apply filters
     let results = rawResults;

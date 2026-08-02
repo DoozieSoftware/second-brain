@@ -8,7 +8,54 @@ Most new connectors should start shallow and deepen over time.
 
 ---
 
-## The anatomy of a connector
+## Fast path: the integration framework (recommended for API sources)
+
+If your source is a straightforward REST API, implement the `SourceConnector` contract instead of the full Operator pattern. It's less code and the source appears automatically in `GET /integrations`, `POST /integrations/:name/test`, and `sync --sources <name>`.
+
+```typescript
+// src/integrations/adapters/your-source-adapter.ts
+import { BaseApiConnector, makeDoc } from '../base-connector.js';
+
+interface RawItem { id: string; title: string; body?: string; updatedAt: string; }
+
+export class YourSourceAdapter extends BaseApiConnector {
+  readonly name = 'yoursource';
+  readonly description = 'Your Source work items';
+
+  isConfigured(): boolean {
+    return !!this.env('YOURSOURCE_API_KEY');
+  }
+
+  protected baseUrl(): string {
+    return 'https://api.yoursource.com/v1';
+  }
+
+  async fetch(syncOptions?: { since?: string }): Promise<MemoryDocument[]> {
+    const items = await this.paginate<RawItem>('/items', { since: syncOptions?.since });
+    return items.map(item => makeDoc({
+      id: `yoursource:${item.id}`,
+      text: `${item.title}\n\n${item.body ?? ''}`,
+      source: this.name,
+      type: 'item',
+      url: `${this.baseUrl()}/items/${item.id}`,
+      date: item.updatedAt,
+    }));
+  }
+}
+```
+
+Register it:
+
+```typescript
+// src/integrations/adapters/index.ts (or the registry)
+registry.register('yoursource', new YourSourceAdapter());
+```
+
+The contract lives in `src/integrations/base-connector.ts` (`SourceConnector`, `BaseApiConnector`, `ConfigValidation`, `makeDoc`, `SyncOptions`). Ten adapters already exist in `src/integrations/adapters/` — copy the closest one (gitlab or jira for issue-style sources, slack/discord for chat, notion/confluence for wiki).
+
+---
+
+## Deep path: the Operator pattern
 
 Every connector in Second Brain has the same shape: **a class with a `fetch()` method that returns `MemoryDocument[]`**. The system handles embedding, persistence, and search.
 
@@ -240,6 +287,15 @@ This is v2.0 territory. Don't build it for v1 of a new connector.
 
 ## Checklist
 
+**Integration adapter (fast path):**
+- [ ] `src/integrations/adapters/your-source-adapter.ts` extending `BaseApiConnector`
+- [ ] `isConfigured()` + `fetch()` implemented; `name`/`description` set
+- [ ] Registered in `src/integrations/connector-registry.ts`
+- [ ] Env vars in `.env.example` (grouped)
+- [ ] Tests in `src/__tests__/integration-framework.test.ts` (or a new test file)
+- [ ] Config via `ConfigValidation` if the adapter takes non-env config
+
+**Operator (deep path):**
 - [ ] `src/connectors/your-connector.ts` with `fetch(): Promise<MemoryDocument[]>`
 - [ ] `src/operators/your-operator.ts` extending `Operator` with `sync()`
 - [ ] Registered in `src/core/supervisor.ts` constructor

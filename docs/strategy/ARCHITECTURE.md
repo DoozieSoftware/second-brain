@@ -40,8 +40,9 @@ src/
 │   ├── operator.ts          # Base Operator class — the reasoning loop
 │   ├── supervisor.ts        # SupervisorOperator — routes queries across operators
 │   ├── reasoning.ts         # OpenRouter LLM client + fallback parser
-│   ├── memory.ts            # Vector store: embeddings + cosine similarity
-│   ├── search.ts            # SearchEngine — score threshold + metadata filtering
+│   ├── memory.ts            # Hybrid store: embeddings + BM25 full-text + RRF merge
+│   ├── search.ts            # SearchEngine — vector/text/hybrid modes + filters
+│   ├── json-store.ts        # JSON-file persistence primitive for domain engines
 │   ├── linker.ts            # CrossSourceLinker — entity extraction + cross-source joins
 │   ├── tools.ts             # Tool registry for LLM function calling
 │   ├── json-extract.ts      # Robust JSON object extraction from LLM responses
@@ -71,6 +72,26 @@ src/
 │   ├── smtp-connector.ts
 │   └── file-import-connector.ts  # URL/URL-list/URL-file/folder/file imports
 │
+├── integrations/            # CTO Command Center — connector framework
+│   ├── base-connector.ts    # SourceConnector contract + BaseApiConnector
+│   ├── connector-registry.ts# Registry of registered adapters
+│   ├── index.ts             # registerAllConnectors() — wires every adapter
+│   └── adapters/            # GitLab, Jira, Linear, Slack, Discord, Notion,
+│                            #   Confluence, CRM, GWorkspace, Internal-API
+│
+├── strategy/                # CTO Command Center — strategy engine
+│   └── strategy-engine.ts   # Goals, initiatives, milestones, roadmaps
+│
+├── decisions/               # CTO Command Center — decision engine
+│   └── decision-engine.ts   # ADRs, options, supersede chains, impact analysis
+│
+├── analytics/               # CTO Command Center — analytics engine
+│   └── analytics-engine.ts  # Insight generation + trend detection (rule-based)
+│
+├── identity/                # CTO Command Center — users & RBAC
+│   ├── identity-store.ts    # Users, per-user API keys (SHA-256), teams
+│   └── access-control.ts    # Principal, roles, permission matrix
+│
 ├── proactive/               # Push (no question required)
 │   ├── savings-scanner.ts   # Duplicate work, stalled PRs, meeting waste
 │   └── delivery.ts          # Alert storage, Slack + email formatting
@@ -82,7 +103,7 @@ src/
 │   └── profile-updater.ts   # Explicit + implicit feedback → user model
 │
 ├── middleware/
-│   └── auth.ts              # Bearer token auth (optional via API_KEY env)
+│   └── auth.ts              # Identity-mode RBAC + legacy Bearer API_KEY auth
 │
 ├── cli.ts                   # CLI entry point
 ├── repl.ts                  # Interactive chat REPL
@@ -175,10 +196,35 @@ The reasoning base class. Every domain operator extends it. The key methods:
 
 ### `SearchEngine` (`src/core/search.ts`)
 
-Sits on top of `Memory`. Adds:
-- Score threshold filtering (drop results below 0.3 cosine)
+Sits on top of `Memory`. Three retrieval modes, selected per call:
+- `vector` — cosine similarity over embeddings (default, backward compatible)
+- `text` — BM25 full-text over the inverted index (works without the model)
+- `hybrid` — Reciprocal Rank Fusion over both rankings (robust when embeddings fail)
+
+Adds:
+- Score threshold filtering (drop results below `minScore`)
 - Metadata filters (source, type, date range)
 - Top-k with diversity (avoid returning 5 near-duplicates)
+- Search-history tracking for analytics
+
+### `JsonStore` (`src/core/json-store.ts`)
+
+A minimal, dependency-free JSON-file-backed store (one file per domain engine under `DATA_DIR`). Used by the strategy, decision, identity, and analytics engines for consistent persistence without a database. Each store owns a single top-level array of `{ id, ... }` records; `upsert`/`upsertMany`/`delete`/`clear` round out the surface.
+
+### CTO Command Center engines
+
+The four engines that give a CTO second-brain, all exposed through `SupervisorOperator` and the Express API:
+
+| Engine | Location | Purpose |
+|---|---|---|
+| Strategy | `src/strategy/strategy-engine.ts` | Goals, initiatives, milestones, roadmaps with progress rollup and quarterly views |
+| Decisions | `src/decisions/decision-engine.ts` | ADRs, decision options, supersede chains, and hybrid-search impact analysis |
+| Identity | `src/identity/` | Users, per-user API keys (SHA-256), teams, and RBAC (`admin`/`editor`/`viewer`) |
+| Analytics | `src/analytics/analytics-engine.ts` | Rule-based insight generation + trend detection, snapshot persistence |
+
+### Integration framework (`src/integrations/`)
+
+A `SourceConnector` contract (`isConfigured`, `validateConfig`, `testConnection`, `fetch`) with a registry. Ten adapters ship in `src/integrations/adapters/` (GitLab, Jira, Linear, Slack, Discord, Notion, Confluence, CRM, GWorkspace, Internal-API). Sources registered as adapters are reachable through `sync --sources <name>`, `POST /integrations/:name/test`, and the connector list endpoint — no operator class required.
 
 ### `CrossSourceLinker` (`src/core/linker.ts`)
 
@@ -193,10 +239,15 @@ All state is local file storage under `data/`:
 ```
 data/
 ├── memory.json          # Vector store: all MemoryDocuments + embeddings
+├── memory-versions.json # Version history per document id (tagging+versioning)
 ├── user-model.json      # Per-user Bayesian preference model
 ├── system-model.json    # Cross-session learned patterns
 ├── alerts.json          # Active + dismissed savings alerts
 ├── digest.md            # Latest markdown savings digest
+├── strategy-goals.json  # Strategy engine: goals, initiatives, roadmaps
+├── decisions.json       # Decision engine: ADR records + options
+├── identity-users.json  # Identity store: users, key hashes, teams
+├── analytics-snapshots.json  # Analytics engine: insight/trend snapshots
 ├── email-config.json    # Per-mailbox IMAP config (sensitive — gitignore)
 ├── connector-config.json # Per-connector config (sensitive — gitignore)
 └── demo/                # (planned v1.0.1) Acme Co. demo corpus
@@ -229,14 +280,17 @@ The system "learns" in three layers:
 
 ## Tool surface (LLM function calling)
 
-The supervisor exposes 4 tools to the LLM:
+The supervisor exposes tools to the LLM:
 
 | Tool | Args | Purpose |
 |---|---|---|
-| `search_memory` | `{query, k?, source?}` | Cosine search over the vector store |
+| `search_memory` | `{query, k?, source?}` | Hybrid search over memory (vector + BM25) |
 | `search_related` | `{doc_id, k?}` | Find documents related to a given doc |
 | `search_across_sources` | `{query, sources}` | Multi-source parallel search |
 | `find_connections` | `{doc_id, depth?}` | Cross-source entity link graph |
+| `get_strategy_overview` | — | Current goals, initiatives, milestones |
+| `get_decision_log` | `{status?}` | Recorded architectural decisions |
+| `get_decision_impact` | `{decision_id}` | What a decision impacted / superseded |
 
 The free OpenRouter models we use don't reliably emit function-calling JSON, so the reasoning engine also accepts a `TOOL_CALL: name({"json": "args"})` plain-text format. The `parseToolCallsFromText` regex is at `src/core/reasoning.ts:200`.
 
@@ -247,7 +301,7 @@ The free OpenRouter models we use don't reliably emit function-calling JSON, so 
 See `docs/reference/API.md` for the full list. Key endpoints:
 
 - `POST /ask` — main question endpoint
-- `POST /sync` — trigger a source sync
+- `POST /sync` — trigger a source sync (legacy operators + integration adapters)
 - `POST /scan` — run the savings scanner
 - `GET /alerts` — active alerts
 - `POST /alerts/:id/acknowledge` — dismiss an alert (auth-gated)
@@ -259,11 +313,40 @@ See `docs/reference/API.md` for the full list. Key endpoints:
 - `POST /deliver/slack` — post digest to Slack webhook
 - `GET /deliver/email` — get HTML+text email digest
 
+**CTO Command Center:**
+
+- `GET /strategy/overview`, `/strategy/goals`, `/strategy/roadmaps` — strategy engine
+- `GET|POST /decisions`, `GET /decisions/:id`, `GET /decisions/:id/impact` — decision engine
+- `GET /analytics`, `/analytics/history`, `/analytics/diff` — analytics engine
+- `GET /integrations`, `POST /integrations/:name/test` — integration framework
+- `GET|POST /admin/users`, `/admin/teams`, `GET /me` — identity & RBAC
+
+**Knowledge (tagging & versioning):**
+
+- `GET /knowledge/search?q=` — search the knowledge base
+- `GET /knowledge/documents`, `GET /knowledge/documents/:id` — read docs
+- `POST|DELETE /knowledge/documents/:id/tags` — manage tags
+- `GET /knowledge/tags` — tag counts
+- `GET /knowledge/documents/:id/versions`, `POST .../versions/:n/restore` — version history & rollback
+
+## Authentication & RBAC
+
+Three modes, resolved at startup:
+1. **Identity mode** — if any users exist, each request is matched against per-user API keys (stored as SHA-256 hashes). `admin` has wildcard access; `editor` can read/write knowledge/strategy/decisions/connectors and read alerts; `viewer` is read-only.
+2. **Legacy mode** — if `API_KEY` env is set, all requests use the single shared Bearer token.
+3. **Open mode** — neither configured; unauthenticated (fine for local use).
+
+Sensitive routes (writes, admin) are guarded with `requireAccess('write', 'knowledge'|'strategy'|'decisions'|'connectors'|'alerts')` and `requireAdmin()`. See `src/middleware/auth.ts`.
+
 ---
 
 ## Adding a new connector
 
-See `docs/contributing/ADDING-A-CONNECTOR.md` for the full guide. The short version:
+Two paths exist:
+
+**A. Integration adapter (fast path, recommended for API sources).** Implement the `SourceConnector` contract (`isConfigured`, `validateConfig`, `testConnection`, `fetch`) in `src/integrations/adapters/`, register it in `src/integrations/connector-registry.ts`, and it automatically appears in `sync --sources <name>`, `GET /integrations`, and `POST /integrations/:name/test`. See `docs/contributing/ADDING-A-CONNECTOR.md` and `src/integrations/base-connector.ts`.
+
+**B. Legacy operator (deep path).** The full Operator pattern — connector + operator + reasoning. Steps:
 
 1. **Connector** at `src/connectors/your-connector.ts` — returns `MemoryDocument[]`
 2. **Operator** at `src/operators/your-operator.ts` — extends `Operator`, adds `sync()`
@@ -282,5 +365,5 @@ A shallow connector (list endpoints only) takes ~1 day. A deep connector with we
 - **No web framework for the UI.** The web UI is vanilla HTML + CSS + JS, served by Express as static files. A SPA framework would add a build step and 200kB of JavaScript for a 4-page app. We chose the boring option deliberately.
 - **No vector DB at v1.0.0.** The `memory.json` file works for single-tenant. Migration to `pgvector` or `LanceDB` is planned for v2.0 (Team Memory) when concurrent writes become a problem.
 - **No background job system.** The savings scanner is on-demand (CLI or cron). A proper queue (BullMQ, Inngest) is planned for v1.1 Daily Digest.
-- **No multi-tenant.** The system has no concept of "user" beyond the local `UserModelManager` singleton. Multi-tenancy is the v2.0 work.
+- **No multi-tenant.** The system has per-user API keys and RBAC (single-org, multiple humans), but no org/workspace isolation. True multi-tenancy is the v2.0 work.
 - **No fine-tuned embedding model.** Free, fast `all-MiniLM-L6-v2` is good enough. A custom model is a 6-month, 1-engineer-half-time project that buys maybe +3% recall. See `docs/strategy/ROADMAP.md` §"What we are NOT building."

@@ -1,7 +1,11 @@
 # Second Brain — API Reference
 
 **Base URL:** `http://localhost:3000` (default)
-**Auth:** Optional Bearer token. Set `API_KEY` in `.env`, then send `Authorization: Bearer <key>` on every request. Without `API_KEY`, every endpoint is open (fine for local dev).
+
+**Auth — three modes:**
+1. **Identity mode (recommended).** Create users via `POST /admin/users` (admin-only) or the `user:create` CLI command; each returns a personal API key. Send `Authorization: Bearer <key>`. Roles: `admin` (everything), `editor` (read/write knowledge/strategy/decisions/connectors + read alerts), `viewer` (read-only).
+2. **Legacy mode.** Set `API_KEY` in `.env`, then send `Authorization: Bearer <key>` on every request.
+3. **Open mode.** Neither configured — every endpoint is open (fine for local dev).
 
 All endpoints return JSON unless noted. Errors return `{ "error": "<message>" }` with the appropriate HTTP status code.
 
@@ -360,6 +364,219 @@ Return the formatted email digest for the latest scan.
 Return the raw markdown digest file.
 
 **Response:** `text/plain` (the contents of `data/digest.md`).
+
+---
+
+## CTO Command Center — Strategy
+
+### `GET /strategy/overview`
+
+Current goals, initiatives, and milestones with progress rollup.
+
+```json
+{
+  "goals": [
+    { "id": "goal_...", "title": "Reduce infra spend", "quarter": "2026-Q3", "progress": 0.4, "initiatives": [...] }
+  ]
+}
+```
+
+### `GET /strategy/goals`
+
+List goals. Query: `?status=<draft|active|completed|archived>`.
+
+### `POST /strategy/goals`
+
+Create a goal. **Requires `write:strategy`** (editor or admin).
+
+```json
+{ "title": "Reduce infra spend", "quarter": "2026-Q3", "description": "Cut cloud costs by 20%", "owner": "cto", "tags": ["cost"] }
+```
+
+### `GET /strategy/goals/:id`, `PATCH /strategy/goals/:id/status`, `DELETE /strategy/goals/:id`
+
+Read, transition, or archive a goal. Writes require `write:strategy`.
+
+### `POST /strategy/initiatives`
+
+Create an initiative under a goal.
+
+```json
+{ "goalId": "goal_...", "title": "Right-size EC2 instances", "quarter": "2026-Q3", "owner": "platform" }
+```
+
+### `GET /strategy/roadmaps`, `POST /strategy/roadmaps`, `GET /strategy/roadmaps/:id`
+
+Quarterly roadmap views with milestone completion. Writes require `write:strategy`.
+
+---
+
+## CTO Command Center — Decisions
+
+### `GET /decisions`
+
+List decision records. Query: `?status=proposed|accepted|rejected|superseded` or `?q=<keyword>`.
+
+### `POST /decisions`
+
+Record an architectural decision. **Requires `write:decisions`**.
+
+```json
+{
+  "title": "Adopt Postgres for the order service",
+  "context": "MySQL is hitting scaling limits...",
+  "decision": "Migrate orders service to Postgres",
+  "status": "accepted",
+  "options": [{ "title": "Stay on MySQL", "pros": [...], "cons": [...] }],
+  "supersedes": "decision_id_optional"
+}
+```
+
+### `GET /decisions/:id`
+
+Full record with options and impact.
+
+### `POST /decisions/:id/impact`
+
+Analyze which memory documents a decision affects. **Requires `write:decisions`**. Uses hybrid search across the knowledge base.
+
+```json
+{ "decisionId": "..." }
+```
+
+---
+
+## CTO Command Center — Analytics
+
+### `GET /analytics`
+
+Generate (and persist) a fresh analytics snapshot: rule-based insights + trends.
+
+```json
+{
+  "snapshot": {
+    "id": "ins_...",
+    "timestamp": "2026-08-02T...",
+    "summary": { "totalQueries": 42, "totalErrors": 2, "errorRate": 0.04, "documents": 1247, "decisionCount": 5, "goals": 3, "health": "healthy" },
+    "insights": [{ "category": "quality", "severity": "warning", "title": "...", "detail": "...", "recommendation": "..." }],
+    "trends": [{ "key": "query_volume", "title": "Daily query volume", "direction": "improving", "points": [...], "delta": 2 }]
+  }
+}
+```
+
+### `GET /analytics/history`
+
+All persisted snapshots, newest first.
+
+### `GET /analytics/diff`
+
+Delta between the two most recent snapshots.
+
+---
+
+## CTO Command Center — Integrations
+
+### `GET /integrations`
+
+List all registered integration adapters and their config state.
+
+```json
+{
+  "integrations": [
+    { "name": "gitlab", "configured": false, "description": "..." },
+    { "name": "jira", "configured": true, "description": "..." }
+  ]
+}
+```
+
+### `POST /integrations/:name/test`
+
+Test connectivity for an adapter. **Requires `write:connectors`**.
+
+**Response:** `{ "ok": true, "message": "..." }` or `{ "ok": false, "message": "..." }`.
+
+Integration adapters also appear as sync sources: `POST /sync` with `{ "sources": ["gitlab", "jira"] }`.
+
+---
+
+## CTO Command Center — Identity & RBAC
+
+### `GET /admin/users`
+
+List users (safe projection — no keys). **Admin only.**
+
+### `POST /admin/users`
+
+Create a user. **Admin only.** Returns the API key **once**.
+
+```json
+{ "name": "Akshay", "email": "ak@company.com", "role": "editor", "teams": ["platform"] }
+```
+
+**Response:**
+```json
+{ "user": { "id": "...", "name": "Akshay", "email": "ak@company.com", "role": "editor" }, "apiKey": "sb_live_..." }
+```
+
+### `DELETE /admin/users/:id`, `POST /admin/users/:id/rotate-key`, `POST /admin/users/:id/revoke-key`
+
+Manage users and keys. **Admin only.**
+
+### `GET /admin/teams`, `POST /admin/teams`, `DELETE /admin/teams/:id`
+
+Team management. **Admin only.**
+
+### `GET /me`
+
+The current caller's principal: `{ principal: { id, name, role, teams, permissions } }`.
+
+---
+
+## Knowledge (tagging & versioning)
+
+### `GET /knowledge/search?q=<query>&limit=<n>`
+
+Hybrid search across the knowledge base.
+
+```json
+{ "results": [{ "id": "github:org/repo#42", "text": "...", "metadata": { "source": "github" }, "score": 0.83 }] }
+```
+
+### `GET /knowledge/documents?tag=<t>&limit=<n>`
+
+List documents, optionally filtered by tag (newest first).
+
+### `GET /knowledge/documents/:id`
+
+Fetch a single document.
+
+### `POST /knowledge/documents/:id/tags`
+
+Add tags. **Requires `write:knowledge`**. Tags are lowercased and deduplicated.
+
+```json
+{ "tags": ["auth", "Security"] }
+```
+
+### `DELETE /knowledge/documents/:id/tags?tags=auth&tags=security`
+
+Remove tags. **Requires `write:knowledge`**.
+
+### `GET /knowledge/tags`
+
+All tags with document counts, sorted by count.
+
+### `GET /knowledge/documents/:id/versions`
+
+Version history, newest first. Versions are created only when content actually changes (content-hash based).
+
+```json
+{ "versions": [{ "version": 2, "hash": "...", "text": "...", "updatedAt": "..." }] }
+```
+
+### `POST /knowledge/documents/:id/versions/:version/restore`
+
+Restore a document to a previous version's text (creates a new version). **Requires `write:knowledge`**.
 
 ---
 

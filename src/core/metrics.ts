@@ -147,6 +147,14 @@ export class MetricsCollector {
     };
   }
 
+  getQueries(): QueryMetric[] {
+    return this.store.queries;
+  }
+
+  getErrors(): ErrorMetric[] {
+    return this.store.errors;
+  }
+
   getMetrics(): MetricsSummary {
     const now = Date.now();
     const oneHourAgo = now - 3600000;

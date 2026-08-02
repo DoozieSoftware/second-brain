@@ -53,6 +53,7 @@ export class SavingsScanner {
     // Page through the entire memory store. The default getAll(1000) cap would
     // miss issues/PRs in any org with more than 1000 docs; we need every doc
     // for cross-source duplicate detection.
+    await this.memory.init();
     const totalCount = this.memory.count;
     const pageSize = 1000;
     const allDocs: MemoryDocument[] = [];

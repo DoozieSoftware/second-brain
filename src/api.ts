@@ -1,13 +1,17 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express, { Request, Response } from 'express';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import multer from 'multer';
 import { SupervisorOperator } from './core/supervisor.js';
+
+// Load .env with override:true so a stale shell-exported key can't shadow the .env one.
+dotenv.config({ override: true });
 import { metricsCollector } from './core/metrics.js';
 import { alertManager } from './core/alerting.js';
 import { logger } from './core/logger.js';
-import { authMiddleware } from './middleware/auth.js';
+import { authMiddleware, requireAccess, requireAdmin, getIdentityStore } from './middleware/auth.js';
+import { connectorRegistry } from './integrations/index.js';
 import { FileImportConnector } from './connectors/file-import-connector.js';
 import { EmailConfigStore } from './core/email-config-store.js';
 import { ConnectorConfigStore } from './core/connector-config-store.js';
@@ -102,8 +106,123 @@ app.get('/alerts/all', (_req: Request, res: Response) => {
 // ─── Auth gates all routes below this line ───
 app.use(authMiddleware);
 
+// ─── Identity & Admin API ───
+
+app.get('/admin/users', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    res.json({ users: getIdentityStore().listUsers() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/admin/users', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    const { email, name, role, teamIds } = req.body;
+    if (!email) {
+      res.status(400).json({ error: 'email is required' });
+      return;
+    }
+    const { user, apiKey } = getIdentityStore().createUser({ email, name, role, teamIds });
+    res.status(201).json({ user, apiKey });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.patch('/admin/users/:id', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const user = getIdentityStore().updateUser(id, req.body);
+    if (!user) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json({ user });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/admin/users/:id', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ok = getIdentityStore().deleteUser(id);
+    res.json({ success: ok });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/admin/users/:id/rotate-key', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const result = getIdentityStore().rotateApiKey(id);
+    if (!result) {
+      res.status(404).json({ error: 'User not found' });
+      return;
+    }
+    res.json({ user: result.user, apiKey: result.apiKey });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/admin/users/:id/revoke-key', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const { keyHash } = req.body;
+    if (!keyHash) {
+      res.status(400).json({ error: 'keyHash is required' });
+      return;
+    }
+    const ok = getIdentityStore().revokeApiKey(id, keyHash);
+    res.json({ success: ok });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/admin/teams', requireAdmin(), (_req: Request, res: Response) => {
+  try {
+    res.json({ teams: getIdentityStore().listTeams() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/admin/teams', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    const { name, description, memberIds } = req.body;
+    if (!name) {
+      res.status(400).json({ error: 'name is required' });
+      return;
+    }
+    const team = getIdentityStore().createTeam({ name, description, memberIds });
+    res.status(201).json({ team });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/admin/teams/:id', requireAdmin(), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ok = getIdentityStore().deleteTeam(id);
+    res.json({ success: ok });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// ─── RBAC-protected core routes ───
+
+app.get('/me', (req: Request, res: Response) => {
+  res.json({ user: req.user ?? null });
+});
+
 // Acknowledge an alert
-app.post('/alerts/:id/acknowledge', (req: Request, res: Response) => {
+app.post('/alerts/:id/acknowledge', requireAccess('write', 'alerts'), (req: Request, res: Response) => {
   const alertId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
   const ok = alertManager.acknowledge(alertId);
   res.json({ success: ok });
@@ -145,7 +264,7 @@ app.post('/ask', async (req: Request, res: Response) => {
   }
 });
 
-app.post('/sync', async (req: Request, res: Response) => {
+app.post('/sync', requireAccess('write', 'connectors'), async (req: Request, res: Response) => {
   try {
     const { sources } = req.body;
     metricsCollector.recordSync();
@@ -177,7 +296,7 @@ const fileImportConnector = new FileImportConnector();
 const emailConfigStore = new EmailConfigStore();
 const connectorConfigStore = new ConnectorConfigStore();
 
-app.post('/import', upload.array('files', 50), async (req: Request, res: Response) => {
+app.post('/import', requireAccess('write', 'knowledge'), upload.array('files', 50), async (req: Request, res: Response) => {
   try {
     const files = (req.files as Express.Multer.File[]) || [];
     if (files.length === 0) {
@@ -210,7 +329,7 @@ app.post('/import', upload.array('files', 50), async (req: Request, res: Respons
   }
 });
 
-app.post('/import/url', async (req: Request, res: Response) => {
+app.post('/import/url', requireAccess('write', 'knowledge'), async (req: Request, res: Response) => {
   try {
     const { url, label } = req.body;
     if (!url) {
@@ -271,7 +390,7 @@ app.get('/settings/email', (_req: Request, res: Response) => {
   res.json({ accounts: emailConfigStore.getAllSafe() });
 });
 
-app.post('/settings/email', (req: Request, res: Response) => {
+app.post('/settings/email', requireAccess('write', 'connectors'), (req: Request, res: Response) => {
   try {
     const { name, host, port, user, password, folders, smtp } = req.body;
     if (!name || !host || !user || !password) {
@@ -298,7 +417,7 @@ app.post('/settings/email', (req: Request, res: Response) => {
   }
 });
 
-app.delete('/settings/email/:name', (req: Request, res: Response) => {
+app.delete('/settings/email/:name', requireAccess('write', 'connectors'), (req: Request, res: Response) => {
   try {
     const name = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
     const removed = emailConfigStore.remove(name);
@@ -355,7 +474,7 @@ app.get('/settings/gdrive', (_req: Request, res: Response) => {
   res.json({ config: connectorConfigStore.getGDriveSafe() });
 });
 
-app.post('/settings/gdrive', (req: Request, res: Response) => {
+app.post('/settings/gdrive', requireAccess('write', 'connectors'), (req: Request, res: Response) => {
   try {
     const { authType, serviceAccountKey, clientId, clientSecret, refreshToken, folderId, includeSharedDrives } = req.body;
     if (authType === 'service_account' && !serviceAccountKey) {
@@ -381,7 +500,7 @@ app.post('/settings/gdrive', (req: Request, res: Response) => {
   }
 });
 
-app.delete('/settings/gdrive', (_req: Request, res: Response) => {
+app.delete('/settings/gdrive', requireAccess('write', 'connectors'), (_req: Request, res: Response) => {
   connectorConfigStore.clearGDrive();
   res.json({ success: true });
 });
@@ -416,7 +535,7 @@ app.get('/settings/dropbox', (_req: Request, res: Response) => {
   res.json({ config: connectorConfigStore.getDropboxSafe() });
 });
 
-app.post('/settings/dropbox', (req: Request, res: Response) => {
+app.post('/settings/dropbox', requireAccess('write', 'connectors'), (req: Request, res: Response) => {
   try {
     const { authType, accessToken, appKey, appSecret, refreshToken, paths } = req.body;
     if (authType === 'access_token' && !accessToken) {
@@ -441,7 +560,7 @@ app.post('/settings/dropbox', (req: Request, res: Response) => {
   }
 });
 
-app.delete('/settings/dropbox', (_req: Request, res: Response) => {
+app.delete('/settings/dropbox', requireAccess('write', 'connectors'), (_req: Request, res: Response) => {
   connectorConfigStore.clearDropbox();
   res.json({ success: true });
 });
@@ -470,7 +589,7 @@ app.post('/settings/dropbox/test', async (_req: Request, res: Response) => {
 // ─── Proactive Alerts API ───
 
 // Run a new scan and persist results
-app.post('/scan', async (_req: Request, res: Response) => {
+app.post('/scan', requireAccess('write', 'connectors'), async (_req: Request, res: Response) => {
   try {
     metricsCollector.recordScan();
     const report = await supervisor.scanAndStore();
@@ -497,7 +616,7 @@ app.get('/alerts', async (_req: Request, res: Response) => {
 });
 
 // Dismiss an alert
-app.post('/alerts/:id/dismiss', async (req: Request, res: Response) => {
+app.post('/alerts/:id/dismiss', requireAccess('write', 'alerts'), async (req: Request, res: Response) => {
   try {
     const alertId = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
     const ok = supervisor.dismissAlertById(alertId);
@@ -520,7 +639,7 @@ app.get('/deliver/slack', async (_req: Request, res: Response) => {
 });
 
 // POST to Slack webhook URL
-app.post('/deliver/slack', async (req: Request, res: Response) => {
+app.post('/deliver/slack', requireAccess('write', 'connectors'), async (req: Request, res: Response) => {
   try {
     const { webhookUrl } = req.body;
     if (!webhookUrl) {
@@ -556,6 +675,448 @@ app.get('/deliver/digest', async (_req: Request, res: Response) => {
     res.type('text/plain').send(content);
   } catch {
     res.status(404).json({ error: 'No digest yet. Run a scan first.' });
+  }
+});
+
+// ─── Strategy Engine API ───
+
+app.get('/strategy/overview', (req: Request, res: Response) => {
+  try {
+    const quarter = typeof req.query.quarter === 'string' ? req.query.quarter : undefined;
+    res.json({ view: supervisor.getStrategy().quarterlyView(quarter) });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/strategy/goals', (_req: Request, res: Response) => {
+  try {
+    res.json({ goals: supervisor.getStrategy().listGoals() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/strategy/goals', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const goal = supervisor.getStrategy().createGoal(req.body);
+    res.status(201).json({ goal });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/strategy/goals/:id', (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const rolled = supervisor.getStrategy().goalProgress(id);
+    if (!rolled.goal) {
+      res.status(404).json({ error: 'Goal not found' });
+      return;
+    }
+    res.json(rolled);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.patch('/strategy/goals/:id', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const goal = supervisor.getStrategy().updateGoal(id, req.body);
+    if (!goal) {
+      res.status(404).json({ error: 'Goal not found' });
+      return;
+    }
+    res.json({ goal });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/strategy/goals/:id', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ok = supervisor.getStrategy().deleteGoal(id);
+    res.json({ success: ok });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/strategy/initiatives', (req: Request, res: Response) => {
+  try {
+    const goalId = typeof req.query.goalId === 'string' ? req.query.goalId : undefined;
+    res.json({ initiatives: supervisor.getStrategy().listInitiatives(goalId) });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/strategy/initiatives', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const initiative = supervisor.getStrategy().createInitiative(req.body);
+    if (!initiative) {
+      res.status(400).json({ error: 'Goal does not exist' });
+      return;
+    }
+    res.status(201).json({ initiative });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.patch('/strategy/initiatives/:id', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const initiative = supervisor.getStrategy().updateInitiative(id, req.body);
+    if (!initiative) {
+      res.status(404).json({ error: 'Initiative not found' });
+      return;
+    }
+    res.json({ initiative });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/strategy/initiatives/:id', (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const detail = supervisor.getStrategy().initiativeDetail(id);
+    if (!detail.initiative) {
+      res.status(404).json({ error: 'Initiative not found' });
+      return;
+    }
+    res.json(detail);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/strategy/milestones', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const milestone = supervisor.getStrategy().createMilestone(req.body);
+    if (!milestone) {
+      res.status(400).json({ error: 'Initiative does not exist' });
+      return;
+    }
+    res.status(201).json({ milestone });
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.patch('/strategy/milestones/:id', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const milestone = supervisor.getStrategy().updateMilestone(id, req.body);
+    if (!milestone) {
+      res.status(404).json({ error: 'Milestone not found' });
+      return;
+    }
+    res.json({ milestone });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/strategy/roadmaps', (_req: Request, res: Response) => {
+  try {
+    res.json({ roadmaps: supervisor.getStrategy().listRoadmaps() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/strategy/roadmaps', requireAccess('write', 'strategy'), (req: Request, res: Response) => {
+  try {
+    const roadmap = supervisor.getStrategy().createRoadmap(req.body);
+    res.status(201).json({ roadmap });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/strategy/roadmaps/:id', (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const detail = supervisor.getStrategy().roadmapDetail(id);
+    if (!detail.roadmap) {
+      res.status(404).json({ error: 'Roadmap not found' });
+      return;
+    }
+    res.json(detail);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// ─── Decision Engine API ───
+
+app.get('/decisions', (req: Request, res: Response) => {
+  try {
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined;
+    const query = typeof req.query.q === 'string' ? req.query.q : undefined;
+    const decisions = query
+      ? supervisor.getDecisions().searchByKeyword(query)
+      : supervisor.getDecisions().list(status as any);
+    res.json({ decisions });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/decisions', requireAccess('write', 'decisions'), (req: Request, res: Response) => {
+  try {
+    const decision = supervisor.getDecisions().record(req.body);
+    res.status(201).json({ decision });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/decisions/:id', (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const decision = supervisor.getDecisions().get(id);
+    if (!decision) {
+      res.status(404).json({ error: 'Decision not found' });
+      return;
+    }
+    res.json({ decision });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.patch('/decisions/:id', requireAccess('write', 'decisions'), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const decision = supervisor.getDecisions().update(id, req.body);
+    if (!decision) {
+      res.status(404).json({ error: 'Decision not found' });
+      return;
+    }
+    res.json({ decision });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/decisions/:id', requireAccess('write', 'decisions'), (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const ok = supervisor.getDecisions().delete(id);
+    res.json({ success: ok });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// Impact analysis for a decision
+app.get('/decisions/:id/impact', async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const impact = await supervisor.analyzeDecisionImpact(id);
+    res.json({ impact });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// Chronology (supersedes / superseded-by chain)
+app.get('/decisions/:id/chronology', (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const chrono = supervisor.getDecisions().chronology(id);
+    if (!chrono.record) {
+      res.status(404).json({ error: 'Decision not found' });
+      return;
+    }
+    res.json(chrono);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// ─── Integration Framework API ───
+
+app.get('/integrations', (req: Request, res: Response) => {
+  try {
+    res.json({ integrations: supervisor.getIntegrationStatus() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/integrations/:name/test', async (req: Request, res: Response) => {
+  try {
+    const name = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const connector = connectorRegistry.get(name);
+    if (!connector) {
+      res.status(404).json({ error: `Integration "${name}" not found` });
+      return;
+    }
+    const result = await connector.testConnection();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/integrations/:name/sync', requireAccess('write', 'connectors'), async (req: Request, res: Response) => {
+  try {
+    const name = Array.isArray(req.params.name) ? req.params.name[0] : req.params.name;
+    const since = typeof req.body?.since === 'string' ? req.body.since : undefined;
+    const limit = typeof req.body?.limit === 'number' ? req.body.limit : undefined;
+    const result = await supervisor.syncIntegration(name, { since, limit });
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// ─── Analytics API ───
+
+app.get('/analytics', async (_req: Request, res: Response) => {
+  try {
+    const snapshot = await supervisor.generateAnalytics();
+    res.json({ snapshot });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/analytics/history', (_req: Request, res: Response) => {
+  try {
+    res.json({ snapshots: supervisor.getAnalyticsSnapshots() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/analytics/diff', (_req: Request, res: Response) => {
+  try {
+    res.json({ diff: supervisor.getAnalyticsDiff() });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+// ─── Knowledge API (tagging & versioning) ───
+
+app.get('/knowledge/search', async (req: Request, res: Response) => {
+  try {
+    const q = typeof req.query.q === 'string' ? req.query.q : '';
+    const topK = Math.min(50, Number(req.query.limit ?? 10) || 10);
+    if (!q) {
+      res.status(400).json({ error: 'q query param is required' });
+      return;
+    }
+    const results = await supervisor.search(q, topK);
+    res.json({ results });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/knowledge/documents', async (req: Request, res: Response) => {
+  try {
+    const tag = typeof req.query.tag === 'string' ? req.query.tag : undefined;
+    const limit = Math.min(1000, Number(req.query.limit ?? 100) || 100);
+    const docs = tag
+      ? await supervisor.getMemory().findByTag(tag)
+      : await supervisor.getMemory().getRecent(limit);
+    res.json({ documents: docs });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/knowledge/documents/:id', async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const doc = await supervisor.getMemory().getById(id);
+    if (!doc) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
+    res.json({ document: doc });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/knowledge/documents/:id/tags', requireAccess('write', 'knowledge'), async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const tags = Array.isArray(req.body?.tags) ? req.body.tags.map(String) : [];
+    if (tags.length === 0) {
+      res.status(400).json({ error: 'tags array is required' });
+      return;
+    }
+    const doc = await supervisor.getMemory().addTags(id, tags);
+    if (!doc) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
+    res.json({ document: doc });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.delete('/knowledge/documents/:id/tags', requireAccess('write', 'knowledge'), async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const tags = Array.isArray(req.query.tags) ? req.query.tags.map(String) : [];
+    if (tags.length === 0) {
+      res.status(400).json({ error: 'tags query param required (comma or repeated)' });
+      return;
+    }
+    const doc = await supervisor.getMemory().removeTags(id, tags);
+    if (!doc) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
+    res.json({ document: doc });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/knowledge/tags', async (_req: Request, res: Response) => {
+  try {
+    const tags = await supervisor.getMemory().getAllTags();
+    res.json({ tags });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.get('/knowledge/documents/:id/versions', async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const versions = await supervisor.getMemory().getVersions(id);
+    res.json({ versions });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
+  }
+});
+
+app.post('/knowledge/documents/:id/versions/:version/restore', requireAccess('write', 'knowledge'), async (req: Request, res: Response) => {
+  try {
+    const id = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+    const version = Number(Array.isArray(req.params.version) ? req.params.version[0] : req.params.version);
+    const doc = await supervisor.getMemory().restoreVersion(id, version);
+    if (!doc) {
+      res.status(404).json({ error: 'Document or version not found' });
+      return;
+    }
+    res.json({ document: doc });
+  } catch (error) {
+    res.status(500).json({ error: error instanceof Error ? error.message : 'Internal error' });
   }
 });
 

@@ -36,7 +36,14 @@ export class DocsConnector {
         if (stats.isFile()) {
           allFiles.push(path);
         } else if (stats.isDirectory()) {
-          const pattern = `${path}/**/*{${this.extensions.join(',')}}`;
+          // glob's `{a,b}` brace expansion is a no-op when there's only one
+          // alternative (e.g. `{.md}` matches nothing), so emit a plain
+          // comma-joined alternation for single-extension configs.
+          const extPattern =
+            this.extensions.length === 1
+              ? this.extensions[0]
+              : `{${this.extensions.join(',')}}`;
+          const pattern = `${path}/**/*${extPattern}`;
           const files = await glob(pattern, {
             nodir: true,
             ignore: ['**/node_modules/**', '**/dist/**', '**/.git/**', '**/data/**'],

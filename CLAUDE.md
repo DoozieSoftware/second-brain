@@ -46,9 +46,20 @@ npx tsx src/cli.ts ask "..." --verbose
 # Interactive chat session
 npx tsx src/cli.ts chat
 
-# Sync data sources (github,docs,email,calendar)
+# Sync data sources (github,docs,email,calendar,gitlab,jira,linear,slack,...)
 npx tsx src/cli.ts sync
 npx tsx src/cli.ts sync --sources github,docs
+
+# CTO Command Center
+npx tsx src/cli.ts status              # sources + memory stats
+npx tsx src/cli.ts strategy            # goals, initiatives, roadmap overview
+npx tsx src/cli.ts decisions           # decision log
+npx tsx src/cli.ts analytics           # insights + trends snapshot
+npx tsx src/cli.ts integrations        # registered adapters + config state
+npx tsx src/cli.ts integration:test <name>  # test an adapter connection
+npx tsx src/cli.ts knowledge:search "<query>"  # hybrid search
+npx tsx src/cli.ts knowledge:tags      # all tags with counts
+npx tsx src/cli.ts user:create         # create user (prints API key once)
 
 # Proactive savings scan
 npx tsx src/cli.ts scan
@@ -70,7 +81,10 @@ src/
 │   ├── operator.ts          # Base Operator — reasoning loop lives here
 │   ├── supervisor.ts        # SupervisorOperator — routes queries across operators
 │   ├── reasoning.ts         # OpenRouter LLM wrapper
-│   ├── memory.ts            # Vector store (embeddings + cosine search)
+│   ├── memory.ts            # Hybrid store (embeddings + BM25 + RRF search)
+│   ├── search.ts            # SearchEngine — vector/text/hybrid modes + filters
+│   ├── json-store.ts        # JSON-file persistence primitive for engines
+│   ├── metrics.ts           # Query/error counters + health status
 │   └── tools.ts             # Tool registry for LLM function calling
 ├── operators/               # Domain operators (extend base Operator)
 │   ├── github-operator.ts
@@ -82,6 +96,18 @@ src/
 │   ├── docs-connector.ts
 │   ├── email-connector.ts
 │   └── calendar-connector.ts
+├── integrations/            # CTO Command Center — connector framework
+│   ├── base-connector.ts    # SourceConnector contract + BaseApiConnector
+│   ├── connector-registry.ts
+│   ├── index.ts             # registerAllConnectors()
+│   └── adapters/            # GitLab, Jira, Linear, Slack, Discord, Notion,
+│                            #   Confluence, CRM, GWorkspace, Internal-API
+├── strategy/                # Strategy engine (goals, initiatives, roadmaps)
+├── decisions/               # Decision engine (ADRs, impact analysis)
+├── analytics/               # Analytics engine (insights + trends)
+├── identity/                # Identity & RBAC (users, keys, teams)
+├── middleware/
+│   └── auth.ts              # RBAC + legacy Bearer token auth
 ├── proactive/
 │   └── savings-scanner.ts  # Duplicate/stalled/waste detection
 ├── cli.ts                   # CLI entry point
